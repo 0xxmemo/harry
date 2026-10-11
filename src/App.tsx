@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
 import { emptyMemory, knowledgeCount, loadMemory, Memory } from "./lib/memory";
 import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
-import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp, Workflow } from "lucide-react";
+import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp } from "lucide-react";
 import { Button, cx, Dot, EmptyState, errText, SectionLabel } from "./components/ui";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import Setup from "./views/Setup";
@@ -13,8 +12,7 @@ import Ask from "./views/Ask";
 import Pipeline from "./views/Pipeline";
 import Calls from "./views/Calls";
 import Improve from "./views/Improve";
-import { PIPELINES } from "./lib/pipeline";
-import { getSettings, saveSettings } from "./lib/store";
+import { PIPELINE as pipeline } from "./lib/pipeline";
 import { unfinishedRun } from "./lib/followup";
 import { linkedToolkits } from "./views/Setup";
 import BrainView from "./views/Brain";
@@ -31,27 +29,34 @@ export default function App() {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [, bump] = useState(0);
   const [boot, setBoot] = useState("");
-  const [pipelineId, setPipelineId] = useState("saas");
   const [composio, setComposio] = useState<{ logged_in: boolean; linked: string[] } | null>(null);
   const [resumable, setResumable] = useState(false);
   const [storeHost, setStoreHost] = useState<string | null>(null);
+  // Linking runs in App, not in Connect, so it keeps going (and stays visible) across route changes.
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linkErr, setLinkErr] = useState("");
   // Everything Harry keeps lives in MongoDB, so state loads only once the store is connected.
   const loadStored = useCallback(async () => {
     const s = await api.storeStatus().catch(() => null);
     setStoreHost(s?.host ?? null);
     if (!s?.persistent) return;
     loadMemory().then(setMemory);
-    getSettings().then((x) => x.pipeline && setPipelineId(x.pipeline)).catch(() => {});
     unfinishedRun().then((r) => setResumable(!!r)).catch(() => {});
     api.listRoots().then(setRoots);
   }, []);
+
+  const restore = useCallback(async () => {
+    setLinking("Linking Harry's store…");
+    try { await api.atlasRestore(); } catch (e) { setLinkErr(errText(e)); }
+    finally { setLinking(null); await loadStored(); }
+  }, [loadStored]);
 
   useEffect(() => {
     if (!isTauri()) {
       setBoot("Harry runs as a desktop app. Start it with `bun run app`.");
       return;
     }
-    api.atlasRestore().then(loadStored).catch(() => loadStored());
+    restore();
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
     api.authStatus().then((a) => {
       setAuth(a);
@@ -93,7 +98,6 @@ export default function App() {
       window.removeEventListener("focus", refreshAuth);
     };
   }, [refreshAuth]);
-  const pipeline = PIPELINES[pipelineId];
 
   if (boot) return <div className="flex h-full items-center justify-center text-muted-foreground">{boot}</div>;
   if (!memory) return null;
@@ -122,19 +126,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="px-3">
-          <Select value={pipelineId} onValueChange={async (v) => { setPipelineId(v); await saveSettings({ pipeline: v }); }}>
-            <SelectTrigger size="sm" className="w-full bg-background/40 text-xs">
-              <Workflow className="size-3.5 text-muted-foreground" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.values(PIPELINES).map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <nav className="mt-4 space-y-0.5 px-3">
+        <nav className="space-y-0.5 px-3">
           {nav.map((n) => {
             const Icon = n.icon;
             const active = view === n.id;
@@ -195,15 +187,15 @@ export default function App() {
             </div>
             {[
               ["OpenLLM", auth?.openllm, !auth],
-              ["MongoDB Atlas", auth?.atlas, !auth],
+              // Signing in to Atlas links Harry's store automatically; green means both are done.
+              ["MongoDB Atlas", auth?.atlas && !!storeHost, !auth || (auth.atlas && !storeHost)],
               ["Composio", composio?.logged_in, !composio],
-              ["Mongo store", !!storeHost, !storeHost],
             ].map(([label, ok, warn]) => (
               <div key={String(label)} className="flex items-center gap-2 text-muted-foreground">
                 <Dot ok={!!ok} warn={!!warn} />
                 <span className="flex-1">{label as string}</span>
                 {label === "Composio" && composio?.linked.length ? <span className="truncate text-[11px]">{composio.linked.length} linked</span> : null}
-                {label === "Mongo store" ? <span className="truncate text-[11px]">{storeHost ? "connected" : "not connected"}</span> : null}
+                {label === "MongoDB Atlas" && linking ? <span className="truncate text-[11px]">linking…</span> : null}
               </div>
             ))}
           </button>
@@ -216,6 +208,7 @@ export default function App() {
           <Setup
             onReady={() => {
               refreshAuth();
+              if (!storeHost && !linking) restore();
               setView("connect");
             }}
           />
@@ -224,19 +217,30 @@ export default function App() {
           <Connect
             atlasReady={!!auth?.atlas}
             storeReady={!!storeHost}
+            linking={linking}
+            linkErr={linkErr}
             hubspotLinked={!!composio?.linked.some((l) => /hubspot/i.test(l))}
             onImported={(s) => {
               api.mongoDisconnect();
               setBase(s);
               setView("pipeline");
             }}
-            onConnected={async (label) => {
+            onConnect={async (project, cluster) => {
+              setLinking(`Connecting to ${cluster}…`);
+              setLinkErr("");
               try {
+                await api.atlasConnect(project, cluster);
                 await loadStored();
-                setBase(await mongoSources(label));
+                try {
+                  setBase(await mongoSources(cluster));
+                } catch (e) {
+                  throw new Error(`Connected, but sampling the cluster failed: ${errText(e)}`);
+                }
                 setView("ask");
               } catch (e) {
-                throw new Error(`Connected, but sampling the cluster failed: ${errText(e)}`);
+                setLinkErr(errText(e));
+              } finally {
+                setLinking(null);
               }
             }}
           />

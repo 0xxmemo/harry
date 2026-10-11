@@ -18,7 +18,7 @@ function Option({ icon, title, tag, desc, children, highlight }: { icon: ReactNo
   );
 }
 
-export default function Connect({ atlasReady, storeReady, hubspotLinked, onConnected, onImported }: { atlasReady: boolean; storeReady: boolean; hubspotLinked: boolean; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
+export default function Connect({ atlasReady, storeReady, linking, linkErr, hubspotLinked, onConnect, onImported }: { atlasReady: boolean; storeReady: boolean; linking: string | null; linkErr: string; hubspotLinked: boolean; onConnect: (project: string, cluster: string) => void; onImported: (s: SourceSet) => void }) {
   const [projects, setProjects] = useState<AtlasProject[] | null>(null);
   const [clusters, setClusters] = useState<AtlasCluster[] | null>(null);
   const [project, setProject] = useState("");
@@ -55,7 +55,7 @@ export default function Connect({ atlasReady, storeReady, hubspotLinked, onConne
         <div className="grid grid-cols-2 gap-4">
           <Option highlight icon={<Plug />} title="HubSpot" tag={<Pill tone="brand">via Composio</Pill>} desc="Pull companies, contacts and deals live through your Composio connection. Read-only.">
             {!storeReady ? (
-              <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Connect an Atlas cluster first; Harry keeps its work there.</div>
+              <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">{linking ? <span className="inline-flex items-center gap-2"><Spinner /> {linking}</span> : atlasReady ? "Couldn't set up Harry's store. Pick a cluster on the right." : "Sign in to MongoDB in Setup first; Harry keeps its work there."}</div>
             ) : !hubspotLinked ? (
               <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Run <code>composio link hubspot</code> in Setup to use this.</div>
             ) : (
@@ -78,8 +78,8 @@ export default function Connect({ atlasReady, storeReady, hubspotLinked, onConne
                   <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={!project ? "Cluster" : clusters ? (clusters.length ? "Cluster" : "No clusters") : "Loading…"} /></SelectTrigger>
                   <SelectContent>{clusters?.map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
                 </Select>
-                <Button className="w-full" variant="outline" disabled={!cluster || !!busy} onClick={() => go("atlas", async () => { await api.atlasConnect(project, cluster); await onConnected(cluster); })}>
-                  {busy === "atlas" ? <><Spinner /> Creating database user…</> : <><Check /> Connect</>}
+                <Button className="w-full" variant="outline" disabled={!cluster || !!busy || !!linking} onClick={() => onConnect(project, cluster)}>
+                  {linking ? <><Spinner /> {linking}</> : <><Check /> Connect</>}
                 </Button>
               </div>
             )}
@@ -87,7 +87,7 @@ export default function Connect({ atlasReady, storeReady, hubspotLinked, onConne
         </div>
 
 
-        <ErrorBox>{err}</ErrorBox>
+        <ErrorBox>{err || linkErr}</ErrorBox>
       </div>
     </div>
   );

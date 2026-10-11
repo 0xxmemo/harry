@@ -17,7 +17,7 @@ const DB: &str = "harry";
 
 #[derive(Default)]
 pub struct Store {
-    db: RwLock<Option<(Database, String)>>,
+    pub(crate) db: RwLock<Option<(Database, String)>>,
 }
 
 fn check(coll: &str) -> Result<(), String> {
