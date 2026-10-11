@@ -25,6 +25,13 @@ type Comp = { installed: boolean; logged_in: boolean; connections: unknown };
 /** Toolkit slugs that show as connected/active in `composio connections list`. */
 export function linkedToolkits(connections: unknown): string[] {
   const out = new Set<string>();
+  // Current CLI shape: { "<toolkit>": [{ "status": "ACTIVE" | "INITIALIZING" | ... }, ...] }
+  if (connections && typeof connections === "object" && !Array.isArray(connections)) {
+    for (const [slug, list] of Object.entries(connections as Record<string, unknown>)) {
+      if (Array.isArray(list) && list.some((c) => /^active$/i.test(String((c as { status?: unknown })?.status)))) out.add(slug.toLowerCase());
+    }
+    if (out.size) return [...out];
+  }
   const walk = (v: unknown) => {
     if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === "object") {

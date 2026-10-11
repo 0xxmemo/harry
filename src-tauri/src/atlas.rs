@@ -7,7 +7,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -110,8 +110,43 @@ fn new_password() -> String {
 
 /// Makes `cluster` Harry's database: a single `harry` user (read any database, write only `harry`)
 /// whose description records the cluster, so the next launch can find it through the Atlas CLI.
-/// The password is rotated on every connect and only ever held in memory.
+/// The working connection string is kept in the OS keychain, so later launches reconnect
+/// immediately instead of rotating the password and waiting for Atlas to propagate it.
+const KEYCHAIN_SERVICE: &str = "harry";
+const KEYCHAIN_ACCOUNT: &str = "atlas-store";
+
+fn saved() -> Option<Value> {
+    let e = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok()?;
+    serde_json::from_str(&e.get_password().ok()?).ok()
+}
+
+fn save(project_id: &str, cluster: &str, uri: &str, host: &str) {
+    if let Ok(e) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
+        let _ = e.set_password(&serde_json::json!({ "project": project_id, "cluster": cluster, "uri": uri, "host": host }).to_string());
+    }
+}
+
+/// Reconnect with the saved credentials if they are for `cluster` (or any cluster when None).
+async fn reuse(app: &AppHandle, state: &State<'_, AppState>, cluster: Option<&str>) -> Option<Connected> {
+    let s = saved()?;
+    if cluster.is_some_and(|c| s["cluster"].as_str() != Some(c)) {
+        return None;
+    }
+    let (uri, host) = (s["uri"].as_str()?, s["host"].as_str()?);
+    store::connect(app, uri).await.ok()?;
+    *state.uri.lock().unwrap() = Some(uri.to_string());
+    crate::files::restore_roots(app).await;
+    Some(Connected { username: USER.into(), host: host.into() })
+}
+
 async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cluster: &str) -> Result<Connected, String> {
+    // Each link rotates the password, so two overlapping links (launch restore, post-sign-in
+    // restore, Connect button) would invalidate each other's credentials. Run one at a time.
+    static LINKING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = LINKING.lock().await;
+    if let Some(c) = reuse(app, state, Some(cluster)).await {
+        return Ok(c);
+    }
     let log = "atlas-connect";
     let password = new_password();
     let desc = format!("{DESC}{cluster}");
@@ -139,17 +174,19 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     let srv = cs["standardSrv"].as_str().ok_or("cluster has no SRV connection string")?;
     let host = srv.trim_start_matches("mongodb+srv://").trim_end_matches('/').to_string();
     let uri = format!("mongodb+srv://{USER}:{password}@{host}/?appName=harry");
-    // A password change can take a few seconds to propagate across the cluster.
+    // A new user or password change takes a while to propagate; only auth failures are worth retrying.
     let mut last = String::new();
-    for _ in 0..10 {
+    for _ in 0..40 {
         match store::connect(app, &uri).await {
             Ok(()) => { last.clear(); break; }
-            Err(e) => { last = e; tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+            Err(e) if e.contains("Authentication failed") => { last = e; tokio::time::sleep(std::time::Duration::from_secs(2)).await; }
+            Err(e) => return Err(e),
         }
     }
     if !last.is_empty() {
         return Err(last);
     }
+    save(project_id, cluster, &uri, &host);
     *state.uri.lock().unwrap() = Some(uri);
     crate::files::restore_roots(app).await;
     Ok(Connected { username: USER.into(), host })
@@ -160,17 +197,31 @@ pub async fn atlas_connect(app: AppHandle, state: State<'_, AppState>, project_i
     link(&app, &state, &project_id, &cluster).await
 }
 
-/// On launch: find the cluster Harry was linked to (via the `harry` user's description) and
-/// reconnect. Returns None when the Atlas CLI isn't signed in or nothing was linked yet.
+/// On launch or right after sign-in: reconnect to the cluster Harry was linked to (via the `harry`
+/// user's description). If nothing was linked yet, link the first cluster found so the user never
+/// has a separate "connect the store" step. Returns None when not signed in or there are no clusters.
 #[tauri::command]
 pub async fn atlas_restore(app: AppHandle, state: State<'_, AppState>) -> Result<Option<Connected>, String> {
+    if let Some(host) = app.state::<store::Store>().db.read().await.as_ref().map(|(_, h)| h.clone()) {
+        return Ok(Some(Connected { username: USER.into(), host }));
+    }
+    if let Some(c) = reuse(&app, &state, None).await {
+        return Ok(Some(c));
+    }
     let Ok(v) = atlas_json(&app, &["projects", "list", "--output", "json"]).await else { return Ok(None) };
-    let projects = v.get("results").cloned().unwrap_or(v);
-    for p in projects.as_array().cloned().unwrap_or_default() {
-        let Some(pid) = p["id"].as_str() else { continue };
+    let projects = v.get("results").cloned().unwrap_or(v).as_array().cloned().unwrap_or_default();
+    let ids: Vec<String> = projects.iter().filter_map(|p| p["id"].as_str().map(String::from)).collect();
+    for pid in &ids {
         let Ok(u) = atlas_json(&app, &["dbusers", "describe", USER, "--projectId", pid, "--output", "json"]).await else { continue };
         if let Some(cluster) = u["description"].as_str().and_then(|d| d.strip_prefix(DESC)) {
             return link(&app, &state, pid, cluster).await.map(Some);
+        }
+    }
+    for pid in &ids {
+        let Ok(v) = atlas_json(&app, &["clusters", "list", "--projectId", pid, "--output", "json"]).await else { continue };
+        let clusters = v.get("results").cloned().unwrap_or(v);
+        if let Some(name) = clusters.as_array().and_then(|c| c.first()).and_then(|c| c["name"].as_str()) {
+            return link(&app, &state, pid, name).await.map(Some);
         }
     }
     Ok(None)

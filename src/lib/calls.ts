@@ -4,7 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { extractJson } from "./agent";
-import { PIPELINES } from "./pipeline";
+import { PIPELINE } from "./pipeline";
 import { SourceSet } from "./sources";
 import { getSettings, store, uid } from "./store";
 
@@ -86,7 +86,7 @@ Reply ONE JSON object:
  "followup": {"subject": "...", "body": "follow-up email from the rep that recaps what was actually said and the agreed next step; no prices"}}`;
 
 export async function analyzeCall(call: Call, src: SourceSet) {
-  const pipeline = PIPELINES[(await getSettings()).pipeline ?? "saas"];
+  const pipeline = PIPELINE;
   const stage = pipeline.stages.find((s) => s.checklist.length) ?? pipeline.stages[0];
   const transcript = call.turns.map((t) => `[${t.start}] ${t.speaker}: ${t.text}`).join("\n");
   const res = await api.llm(

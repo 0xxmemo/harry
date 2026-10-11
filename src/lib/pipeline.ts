@@ -3,7 +3,6 @@
 
 import { parse } from "yaml";
 import saasYaml from "../../pipelines/saas.yaml?raw";
-import realEstateYaml from "../../pipelines/real_estate.yaml?raw";
 import { store, uid } from "./store";
 
 export type Variant = { id: string; label: string; hint: string };
@@ -20,10 +19,7 @@ export type Stage = {
 };
 export type Pipeline = { id: string; name: string; entity: string; stages: Stage[]; firm_limits: string[] };
 
-export const PIPELINES: Record<string, Pipeline> = {
-  saas: parse(saasYaml) as Pipeline,
-  real_estate: parse(realEstateYaml) as Pipeline,
-};
+export const PIPELINE = parse(saasYaml) as Pipeline;
 
 export type PlaybookVersion = {
   _id: string;

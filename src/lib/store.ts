@@ -16,7 +16,6 @@ export type Settings = {
   perMailboxPerDay: number;
   businessHours: boolean;
   autoSend: Record<string, boolean>;
-  pipeline?: string;
   recipientOverride?: string;
 };
 
