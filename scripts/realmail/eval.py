@@ -39,6 +39,9 @@ def redact(body):
     body = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "[email]", body)
     body = re.sub(r"https?://\S+", "[link]", body)
     body = re.sub(r"\+?\d[\d\s().-]{7,}\d", "[phone]", body)
+    # Names: the greeting's addressee and the sender's sign-off.
+    body = re.sub(r"^(\s*(?:hi|hey|hello|dear|hola)\s+)[^\n,!]{1,40}", r"\1[name]", body, flags=re.I)
+    body = re.sub(r"\b(Jonathan|Jonny|Archer)\b", "[sender]", body)
     return body.strip()[:1500]
 
 
