@@ -27,11 +27,14 @@ const t0 = Date.now();
 for (let i = 1; i <= total; i++) {
   console.log(`\n=== Round ${i}/${total} · ${pipeline.name} · stage "${stage.name}" · ${n} buyers per run`);
   let last = "";
+  // --rule: a manager-approved rule from a call, tested in round 1 instead of a reviewer proposal.
+  const forced = i === 1 && process.argv.includes("--rule") ? [arg("rule", "")] : [];
+  if (forced.length) console.log(`  Call insight under test: "${forced[0]}"`);
   const r = await runRound(pipeline, stage, n, ({ phase, detail }) => {
     if (phase === last && /^\d+\/\d+$/.test(detail ?? "")) return;
     last = phase;
     console.log(`  ${phase}${detail ? `: ${detail}` : ""}`);
-  });
+  }, forced);
   if (r.candidate?.diff.added.length) console.log(`  + ${r.candidate.diff.added.join("\n  + ")}`);
   if (r.candidate?.diff.removed.length) console.log(`  - ${r.candidate.diff.removed.join("\n  - ")}`);
   console.log(`  held-out: current ${pct(r.testBaseline)} · candidate ${pct(r.testCandidate)} · random edit ${pct(r.testRandom)} · noise ±${pct(r.noise)} → ${r.kept ? "KEPT" : "ROLLED BACK"}`);
