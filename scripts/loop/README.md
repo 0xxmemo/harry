@@ -28,3 +28,11 @@ Each draft gets outcome signals: `no_reply`, `reply`, `meeting_request`, `unsubs
 plus `missed_objection` when the buyer had a concern the email ignored. Each `playbook_review` event
 lists the draft event ids it read (`source_events`), and the resulting playbook version stores them too,
 so every rule change links back to the traces that caused it. `RAINDROP_DEBUG=0` silences SDK logs.
+
+## Regression set
+
+Following howtoeval.com ("turn important failures into tests"; "20 high-signal cases beats 200"):
+each round, the current playbook's held-out failures that matter (ignored the buyer's stated concern,
+or pushy) are saved as regression cases in `evals` (`kind: "regression"`, max 20 per stage). Every
+later candidate replays those exact buyers and must pass the same yes/no check; failing more than 20%
+of them rolls the candidate back even if it beats the noise band.

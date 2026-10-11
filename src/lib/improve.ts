@@ -8,6 +8,7 @@ import { api } from "./api";
 import { activePlaybook, Pipeline, PlaybookVersion, Stage } from "./pipeline";
 import { applyEdit, commitSeed, pairedNoise, randomEdit, review, simulate } from "./sim";
 import { store, uid } from "./store";
+import { recordFailures, regressionCases, scoreRegressions } from "./regressions";
 
 export const TRAIN_SEED = 1001;
 
@@ -65,25 +66,37 @@ export async function runRound(pipeline: Pipeline, stage: Stage, n: number, log:
   log({ phase: "Candidate", detail: `+${candidate.diff.added.length} / −${candidate.diff.removed.length} rules` });
 
   log({ phase: "Held-out test", detail: `seed revealed: ${seed}` });
-  const [tb, tc, tr] = await Promise.all([
+  const cases = await regressionCases(pipeline.id, stage.id);
+  const [tb, tc, tr, reg] = await Promise.all([
     simulate(baseline, stage, seed, n, undefined, traced("test_current")),
     simulate(candidate, stage, seed, n, undefined, traced("test_candidate")),
     simulate(applyEdit(baseline, await randomEdit(baseline, seed), "random_edit", "Random-edit control"), stage, seed, n, undefined, traced("test_random")),
+    cases.length ? simulate(candidate, stage, seed, cases.length, undefined, traced("regressions"), cases.map((c) => c.persona)) : null,
   ]);
+  // Pass/fail regression gate: a candidate may not reintroduce a failure we already fixed or flagged.
+  const regression = reg ? scoreRegressions(cases, reg) : { passed: 0, total: 0, failed: [] };
+  if (regression.total) log({ phase: "Regression set", detail: `${regression.passed}/${regression.total} known failure cases pass` });
   const noise = pairedNoise(tb, tc);
   const gain = tc.rate - tb.rate;
   // Downstream guard: the candidate must not raise the unsubscribe rate.
   const unsub = (r: typeof tb) => r.transcripts.filter((t) => t.outcome === "unsubscribe").length / r.n;
   const hurtsDownstream = unsub(tc) > unsub(tb) + 0.05;
-  const kept = gain > noise && !hurtsDownstream;
+  // Block if more than 20% of known failure cases still fail (some slack: the checker is an LLM, so a single flip is noise).
+  const regressed = regression.failed.length > 0 && regression.failed.length > Math.floor(regression.total * 0.2);
+  const kept = gain > noise && !hurtsDownstream && !regressed;
   const reason = kept
-    ? `+${Math.round(gain * 100)} pts beats the ±${Math.round(noise * 100)} pt noise band`
+    ? `+${Math.round(gain * 100)} pts beats the ±${Math.round(noise * 100)} pt noise band${regression.total ? `, ${regression.passed}/${regression.total} regression cases pass` : ""}`
     : hurtsDownstream
       ? "raised unsubscribes; rolled back"
+      : regressed
+        ? `failed ${regression.failed.length}/${regression.total} regression cases (${[...new Set(regression.failed.map((c) => c.why))].join("; ")}); rolled back`
       : `+${Math.round(gain * 100)} pts is inside the ±${Math.round(noise * 100)} pt noise band; rolled back`;
   log({ phase: kept ? "Kept" : "Rolled back", detail: reason });
 
   candidate.scores = { baseline: tb.rate, candidate: tc.rate, noise };
+  // Error analysis → tests: the current playbook's held-out failures become regression cases.
+  const newCases = await recordFailures(pipeline.id, stage.id, tb, convoId);
+  if (newCases.length) log({ phase: "Regression set", detail: `+${newCases.length} new cases from this round's failures` });
   // Raindrop draft events the reviewer read when proposing this version.
   (candidate as PlaybookVersion & { sourceEvents?: string[]; convoId?: string }).sourceEvents = edit.sourceEvents;
   (candidate as PlaybookVersion & { convoId?: string }).convoId = convoId;

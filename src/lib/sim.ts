@@ -131,8 +131,10 @@ async function pool<T, R>(items: T[], n: number, fn: (t: T, i: number) => Promis
   return out;
 }
 
-export async function simulate(pb: PlaybookVersion, stage: Stage, seed: number, n: number, onTick?: (done: number) => void, trace?: RunTrace): Promise<SimResult> {
-  const ps = personas(seed, n);
+/** `fixed` replays specific buyers (regression cases) instead of drawing `n` from the seed. */
+export async function simulate(pb: PlaybookVersion, stage: Stage, seed: number, n: number, onTick?: (done: number) => void, trace?: RunTrace, fixed?: Persona[]): Promise<SimResult> {
+  const ps = fixed ?? personas(seed, n);
+  n = ps.length;
   const r = seeded(seed * 7919 + 13);
   const rolls = ps.map(() => [r(), r()]);
   const variants = pb.variants.length ? pb.variants.map((v) => v.id) : ["default"];
