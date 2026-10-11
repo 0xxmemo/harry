@@ -1,0 +1,10 @@
+{
+  "$schema": "https://cloud.modelence.com/schema/modelence.config.json?version=1",
+  "resources": {
+    "web": {
+      "type": "service",
+      "image": "node-22-slim",
+      "static": [{ "path": "/", "dir": "site" }]
+    }
+  }
+}
