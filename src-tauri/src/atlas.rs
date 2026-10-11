@@ -101,7 +101,21 @@ pub struct Connected {
     host: String,
 }
 
-const USER: &str = "harry";
+/// Each install gets its own `harry-<id>` database user. A shared user would break other devices,
+/// because every link rotates the password.
+fn user(app: &AppHandle) -> String {
+    let path = link_file(app).with_file_name("device-id");
+    if let Some(id) = std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        return format!("harry-{id}");
+    }
+    let id: String = rand::thread_rng().sample_iter(&Alphanumeric).take(8).map(char::from).collect::<String>().to_lowercase();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, &id);
+    format!("harry-{id}")
+}
+
 const DESC: &str = "Harry store, cluster=";
 
 fn new_password() -> String {
@@ -116,7 +130,7 @@ fn new_password() -> String {
 /// immediately instead of rotating the password and waiting for Atlas to propagate it.
 /// Bumped when the user's role changes, so saved credentials from an older role re-link once
 /// (which updates the role) instead of being reused.
-const SCOPE: &str = "harry-only";
+const SCOPE: &str = "harry-only-device";
 
 fn link_file(app: &AppHandle) -> std::path::PathBuf {
     app.path().app_data_dir().unwrap_or_else(|_| crate::cli::home().join(".harry")).join("atlas-link.json")
@@ -154,7 +168,7 @@ async fn reuse(app: &AppHandle, state: &State<'_, AppState>, cluster: Option<&st
     store::connect(app, uri).await.ok()?;
     *state.uri.lock().unwrap() = Some(uri.to_string());
     crate::files::restore_roots(app).await;
-    Some(Connected { username: USER.into(), host: host.into() })
+    Some(Connected { username: user(app), host: host.into() })
 }
 
 async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cluster: &str) -> Result<Connected, String> {
@@ -169,18 +183,20 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     let password = new_password();
     let desc = format!("{DESC}{cluster}");
     let role = "readWrite@harry";
-    let exists = cli::run(app, log, "atlas", &["dbusers", "describe", USER, "--projectId", project_id, "--output", "json"], &[], None, false).await?.ok();
+    let user = user(app);
+    let user = user.as_str();
+    let exists = cli::run(app, log, "atlas", &["dbusers", "describe", user, "--projectId", project_id, "--output", "json"], &[], None, false).await?.ok();
     let verb = if exists { "update" } else { "create" };
     let mut args = vec!["dbusers", verb];
     if exists {
-        args.extend([USER, "--password", &password]);
+        args.extend([user, "--password", &password]);
     } else {
-        args.extend(["--username", USER, "--password", &password]);
+        args.extend(["--username", user, "--password", &password]);
     }
     args.extend(["--role", role, "--desc", &desc, "--projectId", project_id, "--output", "json"]);
-    let user = cli::run(app, log, "atlas", &args, &[], None, false).await?;
-    if !user.ok() {
-        return Err(format!("Could not set up Harry's database user: {}", user.err_text()));
+    let created = cli::run(app, log, "atlas", &args, &[], None, false).await?;
+    if !created.ok() {
+        return Err(format!("Could not set up Harry's database user: {}", created.err_text()));
     }
 
     let acl = cli::run(app, log, "atlas", &["accessLists", "create", "--currentIp", "--projectId", project_id, "--comment", "Harry", "--output", "json"], &[], None, false).await?;
@@ -191,7 +207,7 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     let cs = atlas_json(app, &["clusters", "connectionStrings", "describe", cluster, "--projectId", project_id, "--output", "json"]).await?;
     let srv = cs["standardSrv"].as_str().ok_or("cluster has no SRV connection string")?;
     let host = srv.trim_start_matches("mongodb+srv://").trim_end_matches('/').to_string();
-    let uri = format!("mongodb+srv://{USER}:{password}@{host}/?appName=harry");
+    let uri = format!("mongodb+srv://{user}:{password}@{host}/?appName=harry");
     // A new user or password change takes a while to propagate; only auth failures are worth retrying.
     let mut last = String::new();
     for _ in 0..40 {
@@ -207,7 +223,7 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     save(app, project_id, cluster, &uri, &host);
     *state.uri.lock().unwrap() = Some(uri);
     crate::files::restore_roots(app).await;
-    Ok(Connected { username: USER.into(), host })
+    Ok(Connected { username: user.into(), host })
 }
 
 #[tauri::command]
@@ -221,7 +237,7 @@ pub async fn atlas_connect(app: AppHandle, state: State<'_, AppState>, project_i
 #[tauri::command]
 pub async fn atlas_restore(app: AppHandle, state: State<'_, AppState>) -> Result<Option<Connected>, String> {
     if let Some(host) = app.state::<store::Store>().db.read().await.as_ref().map(|(_, h)| h.clone()) {
-        return Ok(Some(Connected { username: USER.into(), host }));
+        return Ok(Some(Connected { username: user(&app), host }));
     }
     if let Some(c) = reuse(&app, &state, None).await {
         return Ok(Some(c));
@@ -230,9 +246,12 @@ pub async fn atlas_restore(app: AppHandle, state: State<'_, AppState>) -> Result
     let projects = v.get("results").cloned().unwrap_or(v).as_array().cloned().unwrap_or_default();
     let ids: Vec<String> = projects.iter().filter_map(|p| p["id"].as_str().map(String::from)).collect();
     for pid in &ids {
-        let Ok(u) = atlas_json(&app, &["dbusers", "describe", USER, "--projectId", pid, "--output", "json"]).await else { continue };
-        if let Some(cluster) = u["description"].as_str().and_then(|d| d.strip_prefix(DESC)) {
-            return link(&app, &state, pid, cluster).await.map(Some);
+        // Any Harry user in the project (this device's or a teammate's) records the shared cluster.
+        let Ok(v) = atlas_json(&app, &["dbusers", "list", "--projectId", pid, "--output", "json"]).await else { continue };
+        let users = v.get("results").cloned().unwrap_or(v).as_array().cloned().unwrap_or_default();
+        let cluster = users.iter().find_map(|u| u["description"].as_str().and_then(|d| d.strip_prefix(DESC)).map(String::from));
+        if let Some(cluster) = cluster {
+            return link(&app, &state, pid, &cluster).await.map(Some);
         }
     }
     for pid in &ids {
