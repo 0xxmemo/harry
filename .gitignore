@@ -1,0 +1,24 @@
+# deps / build
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# credentials & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+*credentials*
+*secret*
+.composio/
+.vercel/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.log

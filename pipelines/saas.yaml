@@ -1,0 +1,61 @@
+id: saas
+name: B2B SaaS
+entity: deal
+stages:
+  - id: reply
+    name: Get a reply
+    goal: Prospect replies to outreach
+    success: { check: interaction, outcome: [reply, meeting_request] }
+    owner: agent
+    actions: [send_email]
+    stuck: { unanswered: 3, then: pause }
+    checklist: []
+    playbook:
+      rules:
+        - Open with something specific to their company or role, never a generic greeting.
+        - One clear question per email.
+        - Under 90 words.
+      variants:
+        - { id: question, label: "Direct question", hint: "Lead with one sharp question about their current process." }
+        - { id: insight, label: "Insight first", hint: "Lead with a short, relevant insight from similar companies, then ask." }
+        - { id: short, label: "Ultra short", hint: "Three sentences maximum, casual tone." }
+  - id: call_booked
+    name: Book a call
+    goal: A discovery call is on the calendar
+    success: { check: calendar_event }
+    owner: agent
+    actions: [send_email, propose_times]
+    stuck: { unanswered: 3, then: back }
+    checklist: []
+    playbook:
+      rules:
+        - Propose two concrete time slots in the prospect's timezone.
+        - Restate the one outcome they said they care about.
+      variants:
+        - { id: slots, label: "Two slots", hint: "Offer two specific times and a calendar link fallback." }
+        - { id: value, label: "Value recap", hint: "Recap their stated goal in one line, then ask for 20 minutes." }
+  - id: sales_call
+    name: Sales call
+    goal: Discovery call held with budget and next step
+    success: { check: crm_stage, stage: Demo }
+    owner: human
+    actions: []
+    checklist: [Budget discussed, Decision process identified, Main objection handled, Next step agreed with a date]
+    playbook: { rules: [], variants: [] }
+  - id: close
+    name: Follow up and close
+    goal: Signed agreement
+    success: { check: crm_stage, stage: Closed Won }
+    owner: human_assisted
+    actions: [send_email]
+    checklist: [Recap of agreed scope, Security and legal questions answered, Clear close date]
+    playbook:
+      rules:
+        - Recap exactly what was agreed on the call, quoting their words where possible.
+      variants:
+        - { id: recap, label: "Call recap", hint: "Recap decisions and owners, then the single next step." }
+firm_limits:
+  - never offer discounts or quote prices
+  - never change a deal stage
+  - always honor unsubscribe requests
+  - never claim certifications or features not listed in the facts

@@ -1,0 +1,61 @@
+id: real_estate
+name: Residential real estate
+entity: buyer
+stages:
+  - id: engaged
+    name: Engage the lead
+    goal: Buyer replies with what they're looking for
+    success: { check: interaction, outcome: [reply, meeting_request] }
+    owner: agent
+    actions: [send_email]
+    stuck: { unanswered: 3, then: pause }
+    checklist: []
+    playbook:
+      rules:
+        - Ask about must-haves (bedrooms, area, budget range they're comfortable sharing, timing).
+        - Never comment on neighborhood demographics, schools as a proxy for demographics, or who "fits" an area.
+      variants:
+        - { id: needs, label: "Needs first", hint: "Ask two short questions about must-haves." }
+        - { id: listings, label: "Listings first", hint: "Share that new listings matching their search exist, then ask one question." }
+  - id: tour_booked
+    name: Book a tour
+    goal: A showing is scheduled
+    success: { check: calendar_event }
+    owner: agent
+    actions: [send_email, propose_times, send_listings]
+    stuck: { unanswered: 3, then: back }
+    checklist: []
+    playbook:
+      rules:
+        - Offer two showing times this week.
+      variants:
+        - { id: slots, label: "Two showings", hint: "Offer two specific showing times." }
+  - id: shortlisted
+    name: Shortlist homes
+    goal: Buyer has a shortlist of homes
+    success: { check: crm_stage, stage: Shortlisted }
+    owner: human_assisted
+    actions: [send_email, send_listings]
+    checklist: [Financing status known, Must-haves confirmed]
+    playbook: { rules: [], variants: [] }
+  - id: offer
+    name: Submit offer
+    goal: Offer submitted
+    success: { check: crm_stage, stage: Offer }
+    owner: human
+    actions: []
+    checklist: [Pre-approval confirmed, Offer terms reviewed]
+    playbook: { rules: [], variants: [] }
+  - id: closed
+    name: Close
+    goal: Keys handed over
+    success: { check: crm_stage, stage: Closed }
+    owner: human
+    actions: []
+    checklist: []
+    playbook: { rules: [], variants: [] }
+firm_limits:
+  - fair housing - never steer buyers by race, religion, national origin, familial status, disability, sex, or other protected traits
+  - never describe neighborhoods by who lives there
+  - never quote prices or commission terms
+  - always honor unsubscribe requests
