@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type ToolStatus = { name: string; path: string | null; version: string | null };
 export type AuthStatus = { openllm: boolean; openllm_detail: string; atlas: boolean; atlas_detail: string };
-export type Completion = { text: string; model: string; ms: number; prompt_tokens: number; completion_tokens: number };
+export type Completion = { text: string; model: string; resolved_model: string; finish_reason: string; fallbacks: number; ms: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number };
 export type FileEntry = { path: string; rel: string; ext: string; size: number };
 export type AtlasProject = { id: string; name: string };
 export type AtlasCluster = { name: string; stateName?: string; clusterType?: string };
