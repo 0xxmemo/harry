@@ -28,14 +28,14 @@ const flatten = (row: Doc): Doc => {
 export function Table({ rows }: { rows: Doc[] }) {
   const flat = rows.slice(0, 200).map(flatten);
   const cols = [...new Set(flat.flatMap((r) => Object.keys(r)))].slice(0, 9);
-  if (!rows.length) return <div className="p-6 text-center text-sm text-mute">No rows</div>;
+  if (!rows.length) return <div className="p-6 text-center text-sm text-muted-foreground">No rows</div>;
   return (
     <div className="max-h-80 overflow-auto">
       <table className="selectable w-full text-left text-sm">
-        <thead className="sticky top-0 bg-panel">
+        <thead className="sticky top-0 bg-card">
           <tr>
             {cols.map((c) => (
-              <th key={c} className="border-b border-line px-3 py-2 text-[11px] font-medium tracking-wide text-mute uppercase">
+              <th key={c} className="border-b border-border px-3 py-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
                 {c}
               </th>
             ))}
@@ -43,7 +43,7 @@ export function Table({ rows }: { rows: Doc[] }) {
         </thead>
         <tbody>
           {flat.map((r, i) => (
-            <tr key={i} className="border-b border-line/50 hover:bg-white/[0.02]">
+            <tr key={i} className="border-b border-border/50 hover:bg-white/[0.02]">
               {cols.map((c) => (
                 <td key={c} className={"max-w-64 truncate px-3 py-1.5 " + (typeof r[c] === "number" ? "text-right font-mono tabular-nums" : "")}>
                   {fmt(r[c])}
@@ -65,10 +65,10 @@ export function Chart({ rows, x, y, type }: { rows: Doc[]; x: string; y: string;
   if (!data.length || data.every((d) => !Number.isFinite(d.y))) return null;
   const common = (
     <>
-      <CartesianGrid stroke="#1f2a25" vertical={false} />
-      <XAxis dataKey="x" stroke="#7f8f87" fontSize={11} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-      <YAxis stroke="#7f8f87" fontSize={11} tickLine={false} axisLine={false} width={56} tickFormatter={(v) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
-      <Tooltip contentStyle={{ background: "#121815", border: "1px solid #1f2a25", borderRadius: 8, fontSize: 12 }} cursor={{ fill: "#ffffff08" }} />
+      <CartesianGrid stroke="var(--border)" vertical={false} />
+      <XAxis dataKey="x" stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+      <YAxis stroke="var(--muted-foreground)" fontSize={11} tickLine={false} axisLine={false} width={56} tickFormatter={(v) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
+      <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} cursor={{ fill: "#ffffff08" }} />
     </>
   );
   return (
@@ -77,12 +77,12 @@ export function Chart({ rows, x, y, type }: { rows: Doc[]; x: string; y: string;
         {type === "line" ? (
           <LineChart data={data}>
             {common}
-            <Line dataKey="y" name={y} stroke="#10b981" strokeWidth={2} dot={false} />
+            <Line dataKey="y" name={y} stroke="var(--chart-1)" strokeWidth={2} dot={false} />
           </LineChart>
         ) : (
           <BarChart data={data}>
             {common}
-            <Bar dataKey="y" name={y} fill="#10b981" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="y" name={y} fill="var(--chart-1)" radius={[4, 4, 0, 0]} />
           </BarChart>
         )}
       </ResponsiveContainer>

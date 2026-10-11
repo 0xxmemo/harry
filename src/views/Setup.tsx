@@ -1,19 +1,23 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Check, ChevronDown, ExternalLink, KeyRound, Plug, Terminal } from "lucide-react";
 import { api, AuthStatus, ToolStatus } from "../lib/api";
-import { Button, Card, Dot, ErrorBox, errText, Spinner } from "../components/ui";
+import { Button, Card, cx, ErrorBox, errText, Pill, Spinner } from "../components/ui";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 
 const INFO: Record<string, { label: string; role: string }> = {
-  openllm: { label: "OpenLLM", role: "Inference for every answer and post" },
-  atlas: { label: "Atlas CLI", role: "MongoDB login, projects, clusters, temp users" },
+  openllm: { label: "OpenLLM", role: "Runs every model call" },
+  atlas: { label: "Atlas CLI", role: "Signs in to MongoDB, creates Harry's database user" },
   mongosh: { label: "mongosh", role: "Runs read-only queries on your cluster" },
-  composio: { label: "Composio", role: "Your one integration: email, CRM, and calendar" },
+  composio: { label: "Composio", role: "Your one integration for email, CRM and calendar" },
 };
 
 const PROVIDERS = [
-  { group: "Email", items: [["gmail", "Gmail"], ["outlook", "Outlook"]] },
-  { group: "CRM", items: [["hubspot", "HubSpot"], ["salesforce", "Salesforce"], ["pipedrive", "Pipedrive"]] },
-  { group: "Calendar", items: [["googlecalendar", "Google Calendar"], ["outlook_calendar", "Outlook Calendar"]] },
+  { group: "Email", why: "Send approved follow-ups from your own inbox and read replies", items: [["gmail", "Gmail"], ["outlook", "Outlook"]] },
+  { group: "CRM", why: "Read contacts and deals, add notes and tasks (never edits or deletes)", items: [["hubspot", "HubSpot"], ["salesforce", "Salesforce"], ["pipedrive", "Pipedrive"]] },
+  { group: "Calendar", why: "Confirm a call was actually booked", items: [["googlecalendar", "Google Calendar"], ["outlook_calendar", "Outlook Calendar"]] },
 ] as const;
 
 type Comp = { installed: boolean; logged_in: boolean; connections: unknown };
@@ -21,8 +25,8 @@ type Comp = { installed: boolean; logged_in: boolean; connections: unknown };
 /** Toolkit slugs that show as connected/active in `composio connections list`. */
 export function linkedToolkits(connections: unknown): string[] {
   const out = new Set<string>();
-  const walk = (v: unknown, key = "") => {
-    if (Array.isArray(v)) v.forEach((x) => walk(x, key));
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === "object") {
       const o = v as Record<string, unknown>;
       const slug = (o.toolkit as { slug?: string })?.slug ?? o.toolkit ?? o.slug ?? o.app ?? o.appName;
@@ -30,7 +34,7 @@ export function linkedToolkits(connections: unknown): string[] {
       if (typeof slug === "string" && /active|connected|true/.test(status)) out.add(slug.toLowerCase());
       for (const [k, x] of Object.entries(o)) {
         if (typeof x === "string" && /active|connected/i.test(x) && k.length < 40 && !/status/i.test(k)) out.add(k.toLowerCase());
-        if (x && typeof x === "object") walk(x, k);
+        if (x && typeof x === "object") walk(x);
       }
     }
   };
@@ -38,15 +42,36 @@ export function linkedToolkits(connections: unknown): string[] {
   return [...out];
 }
 
-export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip: () => void }) {
+function Step({ n, done, title, why, children, optional }: { n: number; done?: boolean; title: string; why: string; children: ReactNode; optional?: boolean }) {
+  return (
+    <Card className={cx("rise p-5 transition-colors", done && "border-primary/25")}>
+      <div className="flex gap-4">
+        <div className={cx("flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold tabular-nums", done ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground")}>
+          {done ? <Check className="size-4" /> : n}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="font-medium">{title}</div>
+            {optional && <Pill>optional</Pill>}
+          </div>
+          <div className="mt-0.5 text-sm text-muted-foreground">{why}</div>
+          <div className="mt-4">{children}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export default function Setup({ onReady }: { onReady: () => void }) {
   const [tools, setTools] = useState<ToolStatus[] | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [comp, setComp] = useState<Comp | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [log, setLog] = useState<string[]>([]);
+  const [showLog, setShowLog] = useState(false);
   const [key, setKey] = useState("");
   const [code, setCode] = useState<{ code?: string; url?: string } | null>(null);
-  const [comp, setComp] = useState<Comp | null>(null);
   const [compUrl, setCompUrl] = useState("");
   const logRef = useRef<HTMLPreElement>(null);
 
@@ -55,6 +80,7 @@ export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip
     setTools(t);
     setAuth(a);
     setComp(c);
+    window.dispatchEvent(new CustomEvent("harry-status"));
   };
 
   useEffect(() => {
@@ -73,11 +99,13 @@ export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip
     logRef.current?.scrollTo(0, logRef.current.scrollHeight);
   }, [log]);
 
-  const run = async (id: string, fn: () => Promise<unknown>) => {
+  const run = async (id: string, fn: () => Promise<unknown>, ok?: string) => {
     setBusy(id);
     setErr("");
+    if (id.startsWith("install")) setShowLog(true);
     try {
       await fn();
+      if (ok) toast.success(ok);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -89,160 +117,125 @@ export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip
   };
 
   const installed = (n: string) => !!tools?.find((t) => t.name === n)?.path;
-  const allInstalled = tools?.every((t) => t.path);
+  const allInstalled = !!tools?.every((t) => t.path);
   const linked = linkedToolkits(comp?.connections);
-  const ready = auth?.openllm && installed("mongosh");
+  const steps = [allInstalled, !!auth?.openllm, !!auth?.atlas, !!comp?.logged_in && linked.length > 0];
+  const doneCount = steps.filter(Boolean).length;
+  const ready = !!auth?.openllm && !!auth?.atlas && installed("mongosh");
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col gap-5 overflow-y-auto px-8 pt-16 pb-10">
-      <div className="rise">
-        <h1 className="text-3xl font-semibold tracking-tight">Set up Harry</h1>
-        <p className="mt-1 text-mute">Harry uses a few local tools and one integration, Composio. He installs and signs them in for you. Credentials stay with each tool, never in Harry.</p>
-      </div>
-
-      <Card className="rise divide-y divide-line">
-        {(tools ?? Object.keys(INFO).map((name) => ({ name, path: null, version: null }))).map((t) => (
-          <div key={t.name} className="flex items-center gap-4 px-5 py-4">
-            <Dot ok={!!t.path} warn={!tools} />
-            <div className="flex-1">
-              <div className="font-medium">{INFO[t.name].label}</div>
-              <div className="text-xs text-mute">{t.path ? `${t.version ?? "installed"} · ${t.path}` : INFO[t.name].role}</div>
-            </div>
-            {tools && !t.path && (
-              <Button disabled={!!busy} onClick={() => run(`install-${t.name}`, () => api.installTool(t.name))}>
-                {busy === `install-${t.name}` ? <Spinner /> : null} Install
-              </Button>
-            )}
-          </div>
-        ))}
-      </Card>
-
-      <Card className="rise p-5">
-        <div className="flex items-center gap-3">
-          <Dot ok={auth?.openllm} warn={!auth} />
-          <div className="flex-1">
-            <div className="font-medium">OpenLLM API key</div>
-            <div className="text-xs text-mute">{auth?.openllm ? auth.openllm_detail : "Paste your key from the OpenLLM dashboard. Saved by `openllm login`."}</div>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex max-w-2xl flex-col gap-4 px-8 pt-14 pb-12">
+        <div className="rise">
+          <div className="text-xs font-medium tracking-wider text-muted-foreground uppercase">Setup</div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Connect Harry to your tools</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Four steps. Credentials stay inside each tool; Harry never stores them.</p>
+          <div className="mt-4 flex items-center gap-3">
+            <Progress value={(doneCount / 4) * 100} className="h-1.5 flex-1" />
+            <span className="text-xs text-muted-foreground tabular-nums">{doneCount} of 4</span>
           </div>
         </div>
-        {!auth?.openllm && (
-          <div className="mt-4 flex gap-2">
-            <input
-              type="password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="sk-llm-…"
-              className="flex-1 rounded-lg border border-line bg-black/30 px-3 py-2 font-mono text-sm outline-none focus:border-brand"
-            />
-            <Button
-              disabled={!key || !!busy}
-              onClick={() =>
-                run("openllm-key", async () => {
-                  await api.openllmSetKey(key);
-                  setKey("");
-                })
-              }
-            >
-              {busy === "openllm-key" ? <Spinner /> : null} Connect
-            </Button>
-          </div>
-        )}
-      </Card>
 
-      <Card className="rise p-5">
-        <div className="flex items-center gap-3">
-          <Dot ok={auth?.atlas} warn={!auth} />
-          <div className="flex-1">
-            <div className="font-medium">MongoDB Atlas</div>
-            <div className="text-xs text-mute">{auth?.atlas ? auth.atlas_detail : "Sign in through your browser. The token stays in the Atlas CLI."}</div>
-          </div>
-          {auth?.atlas ? (
-            <Button variant="ghost" disabled={!!busy} onClick={() => run("atlas-logout", api.atlasLogout)}>
-              Sign out
-            </Button>
-          ) : (
-            <Button disabled={!!busy || !installed("atlas")} onClick={() => run("atlas-login", api.atlasLogin)}>
-              {busy === "atlas-login" ? <Spinner /> : <MongoLeaf />} Connect with MongoDB
-            </Button>
-          )}
-        </div>
-        {busy === "atlas-login" && (
-          <div className="rise mt-4 rounded-lg border border-brand/30 bg-brand/5 p-4 text-center">
-            <div className="text-xs tracking-wide text-mute uppercase">Enter this code in the browser</div>
-            <div className="selectable mt-1 font-mono text-4xl font-semibold tracking-[0.2em] text-brand-2">{code?.code ?? "····-····"}</div>
-            <div className="mt-2 text-xs text-mute">
-              {code?.url ? (
-                <>
-                  Opened <span className="selectable text-white">{code.url}</span> · expires in 3 minutes
-                </>
-              ) : (
-                "Starting Atlas login…"
-              )}
-            </div>
-          </div>
-        )}
-      </Card>
-
-      <Card className="rise p-5">
-        <div className="flex items-center gap-3">
-          <Dot ok={comp?.logged_in} warn={!comp} />
-          <div className="flex-1">
-            <div className="font-medium">Composio</div>
-            <div className="text-xs text-mute">
-              {comp?.logged_in ? "Signed in. Link the accounts Harry should use." : "Harry's one integration. Use your Composio account, or create one free in the browser."}
-            </div>
-          </div>
-          {comp?.logged_in ? (
-            <Button variant="ghost" disabled={!!busy} onClick={() => run("composio-logout", api.composioLogout)}>
-              Sign out
-            </Button>
-          ) : (
-            <Button disabled={!!busy || !installed("composio")} onClick={() => run("composio-login", api.composioLogin)}>
-              {busy === "composio-login" ? <Spinner /> : null} Sign in to Composio
-            </Button>
-          )}
-        </div>
-        {busy?.startsWith("composio") && compUrl && (
-          <div className="mt-3 rounded-lg border border-brand/30 bg-brand/5 p-3 text-xs text-mute">
-            Finish in your browser. If it didn't open: <span className="selectable text-white">{compUrl}</span>
-          </div>
-        )}
-        {comp?.logged_in && (
-          <div className="mt-4 space-y-3">
-            {PROVIDERS.map((g) => (
-              <div key={g.group} className="flex items-center gap-3">
-                <div className="w-20 text-xs text-mute">{g.group}</div>
-                <div className="flex flex-wrap gap-2">
-                  {g.items.map(([slug, label]) => {
-                    const on = linked.includes(slug);
-                    return (
-                      <Button key={slug} variant={on ? "primary" : "outline"} className="py-1.5 text-xs" disabled={!!busy || on} onClick={() => run(`composio-link-${slug}`, () => api.composioLink(slug))}>
-                        {busy === `composio-link-${slug}` ? <Spinner /> : on ? "✓" : "+"} {label}
-                      </Button>
-                    );
-                  })}
+        <Step n={1} done={steps[0]} title="Install local tools" why="Harry does everything through these command-line tools, so your accounts stay on your Mac.">
+          <div className="divide-y rounded-lg border">
+            {(tools ?? Object.keys(INFO).map((name) => ({ name, path: null, version: null }))).map((t) => (
+              <div key={t.name} className="flex items-center gap-3 px-3.5 py-2.5">
+                {t.path ? <Check className="size-4 text-primary" /> : tools ? <Terminal className="size-4 text-muted-foreground" /> : <Spinner className="text-muted-foreground" />}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">{INFO[t.name].label}</div>
+                  <div className="truncate text-xs text-muted-foreground">{t.path ? t.version ?? "installed" : INFO[t.name].role}</div>
                 </div>
+                {tools && !t.path && (
+                  <Button size="sm" disabled={!!busy} onClick={() => run(`install-${t.name}`, () => api.installTool(t.name), `${INFO[t.name].label} installed`)}>
+                    {busy === `install-${t.name}` ? <Spinner /> : null} Install
+                  </Button>
+                )}
               </div>
             ))}
           </div>
+        </Step>
+
+        <Step n={2} done={steps[1]} title="Connect OpenLLM" why="The models that draft emails, score calls and review playbooks.">
+          {auth?.openllm ? (
+            <div className="flex items-center gap-2 text-sm text-brand-2"><Check className="size-4" /> {auth.openllm_detail}</div>
+          ) : (
+            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); run("openllm-key", async () => { await api.openllmSetKey(key); setKey(""); }, "OpenLLM connected"); }}>
+              <div className="relative flex-1">
+                <KeyRound className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste your API key (sk-llm-…)" className="pl-9 font-mono" />
+              </div>
+              <Button type="submit" disabled={!key || !!busy || !installed("openllm")}>{busy === "openllm-key" ? <><Spinner /> Verifying…</> : "Connect"}</Button>
+            </form>
+          )}
+        </Step>
+
+        <Step n={3} done={steps[2]} title="Sign in to MongoDB Atlas" why="Harry keeps everything (outbox, runs, playbooks, memory) in a harry database on your cluster. Nothing is stored on your Mac.">
+          {auth?.atlas ? (
+            <div className="flex items-center justify-between text-sm">
+              <span className="flex items-center gap-2 text-brand-2"><Check className="size-4" /> {auth.atlas_detail}</span>
+              <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("atlas-logout", api.atlasLogout)}>Sign out</Button>
+            </div>
+          ) : busy === "atlas-login" ? (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 text-center">
+              <div className="text-xs text-muted-foreground">Enter this code on the MongoDB page that just opened</div>
+              <div className="selectable mt-1 font-mono text-3xl font-semibold tracking-[0.2em] text-brand-2">{code?.code ?? "····-····"}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{code?.url ? "Expires in 3 minutes" : "Starting…"}</div>
+            </div>
+          ) : (
+            <Button variant="outline" disabled={!!busy || !installed("atlas")} onClick={() => run("atlas-login", api.atlasLogin, "Signed in to MongoDB")}>
+              <ExternalLink /> Connect with MongoDB
+            </Button>
+          )}
+        </Step>
+
+        <Step n={4} done={steps[3]} title="Link your accounts through Composio" why="Harry's single integration. Use your Composio account, or create one free when the browser opens.">
+          {!comp?.logged_in ? (
+            <div className="space-y-2">
+              <Button variant="outline" disabled={!!busy || !installed("composio")} onClick={() => run("composio-login", api.composioLogin, "Signed in to Composio")}>
+                {busy === "composio-login" ? <Spinner /> : <Plug />} Sign in to Composio
+              </Button>
+              {busy === "composio-login" && <div className="text-xs text-muted-foreground">Finish in your browser.{compUrl && <> If it didn't open: <span className="selectable text-foreground">{compUrl}</span></>}</div>}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {PROVIDERS.map((g) => (
+                <div key={g.group}>
+                  <div className="text-sm font-medium">{g.group}</div>
+                  <div className="text-xs text-muted-foreground">{g.why}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {g.items.map(([slug, label]) => {
+                      const on = linked.includes(slug);
+                      return (
+                        <Button key={slug} size="sm" variant={on ? "secondary" : "outline"} disabled={!!busy || on} onClick={() => run(`composio-link-${slug}`, () => api.composioLink(slug), `${label} linked`)}>
+                          {busy === `composio-link-${slug}` ? <Spinner /> : on ? <Check className="text-primary" /> : null} {label}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between border-t pt-3">
+                {busy?.startsWith("composio-link") ? <span className="text-xs text-muted-foreground">Finish signing in to the provider in your browser…</span> : <span />}
+                <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => run("composio-logout", api.composioLogout)}>Sign out of Composio</Button>
+              </div>
+            </div>
+          )}
+        </Step>
+
+        <ErrorBox>{err}</ErrorBox>
+
+        {log.length > 0 && (
+          <div>
+            <button onClick={() => setShowLog(!showLog)} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              <ChevronDown className={cx("size-3.5 transition-transform", !showLog && "-rotate-90")} /> Install log
+            </button>
+            {showLog && <pre ref={logRef} className="selectable mt-2 max-h-40 overflow-y-auto rounded-lg border bg-background p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">{log.join("\n")}</pre>}
+          </div>
         )}
-      </Card>
 
-      <ErrorBox>{err}</ErrorBox>
-
-      {log.length > 0 && (
-        <pre ref={logRef} className="selectable max-h-40 overflow-y-auto rounded-lg border border-line bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-mute">
-          {log.join("\n")}
-        </pre>
-      )}
-
-      <div className="flex items-center justify-between pt-2">
-        <button className="text-sm text-mute hover:text-white" onClick={onSkip}>
-          Skip and explore the demo CRM →
-        </button>
-        <Button disabled={!ready} onClick={onReady}>
-          Continue
-        </Button>
+        <div className="flex items-center justify-end border-t pt-5">
+          <Button disabled={!ready} onClick={onReady} title={ready ? "" : "Connect OpenLLM and MongoDB Atlas first"}>Continue</Button>
+        </div>
       </div>
     </div>
   );

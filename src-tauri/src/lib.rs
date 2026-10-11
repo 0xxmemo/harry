@@ -11,7 +11,6 @@ mod transcript;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::Manager;
 
 #[derive(Default)]
 pub struct AppState {
@@ -27,11 +26,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
         .manage(store::Store::default())
-        .setup(|app| {
-            let roots = files::load_roots(app.handle());
-            *app.state::<AppState>().roots.lock().unwrap() = roots;
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             setup::tool_status,
             setup::auth_status,
@@ -42,7 +36,7 @@ pub fn run() {
             atlas::atlas_projects,
             atlas::atlas_clusters,
             atlas::atlas_connect,
-            mongo::mongo_set_uri,
+            atlas::atlas_restore,
             mongo::mongo_disconnect,
             mongo::mongo_sample,
             mongo::mongo_aggregate,
@@ -53,7 +47,6 @@ pub fn run() {
             files::revoke_folder,
             files::scan_folder,
             files::read_source,
-            files::read_picked,
             files::mem_load,
             files::mem_save,
             composio::composio_status,
@@ -65,6 +58,7 @@ pub fn run() {
             composio::outbox_send,
             composio::fetch_replies,
             gate::gate_playbook,
+            store::store_status,
             store::store_list,
             store::store_upsert,
             store::store_reset,

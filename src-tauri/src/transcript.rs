@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn parses_samples() {
         for f in ["granite-bank-discovery.vtt", "helios-health-renewal.docx"] {
-            let bytes = std::fs::read(format!("../demo-crm/calls/{f}")).unwrap();
+            let bytes = std::fs::read(format!("tests/fixtures/{f}")).unwrap();
             let (_, turns) = parse_bytes(f, &bytes).unwrap();
             println!("{f}: {} turns, first {}: {}", turns.len(), turns[0].speaker, &turns[0].text[..30]);
             assert!(turns.len() >= 6);

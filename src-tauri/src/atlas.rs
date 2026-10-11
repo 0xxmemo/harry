@@ -1,5 +1,6 @@
 //! Atlas account and cluster operations, all through the official `atlas` CLI.
 
+use crate::store;
 use crate::cli;
 use crate::AppState;
 use rand::{distributions::Alphanumeric, Rng};
@@ -98,48 +99,79 @@ pub async fn atlas_clusters(app: AppHandle, project_id: String) -> Result<Value,
 pub struct Connected {
     username: String,
     host: String,
-    expires: String,
 }
 
-/// Creates a temporary read-only database user and access-list entry, both auto-deleted by Atlas,
-/// then keeps the resulting connection string in memory only.
-#[tauri::command]
-pub async fn atlas_connect(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    project_id: String,
-    cluster: String,
-) -> Result<Connected, String> {
-    let suffix: String = rand::thread_rng().sample_iter(&Alphanumeric).take(6).map(char::from).collect();
-    let username = format!("harry-{}", suffix.to_lowercase());
-    let password: String = rand::thread_rng().sample_iter(&Alphanumeric).take(28).map(char::from).collect();
-    let expires = (chrono::Utc::now() + chrono::Duration::hours(24)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let log = "atlas-connect";
+const USER: &str = "harry";
+const DESC: &str = "Harry store, cluster=";
 
-    let user = cli::run(
-        &app, log, "atlas",
-        &["dbusers", "create", "readAnyDatabase", "--username", &username, "--password", &password,
-          "--deleteAfter", &expires, "--projectId", &project_id, "--desc", "Harry temporary read-only user", "--output", "json"],
-        &[], None, false,
-    ).await?;
+fn new_password() -> String {
+    rand::thread_rng().sample_iter(&Alphanumeric).take(28).map(char::from).collect()
+}
+
+/// Makes `cluster` Harry's database: a single `harry` user (read any database, write only `harry`)
+/// whose description records the cluster, so the next launch can find it through the Atlas CLI.
+/// The password is rotated on every connect and only ever held in memory.
+async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cluster: &str) -> Result<Connected, String> {
+    let log = "atlas-connect";
+    let password = new_password();
+    let desc = format!("{DESC}{cluster}");
+    let role = "readAnyDatabase@admin,readWrite@harry";
+    let exists = cli::run(app, log, "atlas", &["dbusers", "describe", USER, "--projectId", project_id, "--output", "json"], &[], None, false).await?.ok();
+    let verb = if exists { "update" } else { "create" };
+    let mut args = vec!["dbusers", verb];
+    if exists {
+        args.extend([USER, "--password", &password]);
+    } else {
+        args.extend(["--username", USER, "--password", &password]);
+    }
+    args.extend(["--role", role, "--desc", &desc, "--projectId", project_id, "--output", "json"]);
+    let user = cli::run(app, log, "atlas", &args, &[], None, false).await?;
     if !user.ok() {
-        return Err(format!("Could not create a read-only database user: {}", user.err_text()));
+        return Err(format!("Could not set up Harry's database user: {}", user.err_text()));
     }
 
-    let acl = cli::run(
-        &app, log, "atlas",
-        &["accessLists", "create", "--currentIp", "--deleteAfter", &expires, "--projectId", &project_id,
-          "--comment", "Harry (auto-expires)", "--output", "json"],
-        &[], None, false,
-    ).await?;
+    let acl = cli::run(app, log, "atlas", &["accessLists", "create", "--currentIp", "--projectId", project_id, "--comment", "Harry", "--output", "json"], &[], None, false).await?;
     if !acl.ok() && !acl.err_text().contains("already") {
         return Err(format!("Could not add this machine to the access list: {}", acl.err_text()));
     }
 
-    let cs = atlas_json(&app, &["clusters", "connectionStrings", "describe", &cluster, "--projectId", &project_id, "--output", "json"]).await?;
+    let cs = atlas_json(app, &["clusters", "connectionStrings", "describe", cluster, "--projectId", project_id, "--output", "json"]).await?;
     let srv = cs["standardSrv"].as_str().ok_or("cluster has no SRV connection string")?;
     let host = srv.trim_start_matches("mongodb+srv://").trim_end_matches('/').to_string();
-    let uri = format!("mongodb+srv://{username}:{password}@{host}/?appName=harry");
+    let uri = format!("mongodb+srv://{USER}:{password}@{host}/?appName=harry");
+    // A password change can take a few seconds to propagate across the cluster.
+    let mut last = String::new();
+    for _ in 0..10 {
+        match store::connect(app, &uri).await {
+            Ok(()) => { last.clear(); break; }
+            Err(e) => { last = e; tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+        }
+    }
+    if !last.is_empty() {
+        return Err(last);
+    }
     *state.uri.lock().unwrap() = Some(uri);
-    Ok(Connected { username, host, expires })
+    crate::files::restore_roots(app).await;
+    Ok(Connected { username: USER.into(), host })
+}
+
+#[tauri::command]
+pub async fn atlas_connect(app: AppHandle, state: State<'_, AppState>, project_id: String, cluster: String) -> Result<Connected, String> {
+    link(&app, &state, &project_id, &cluster).await
+}
+
+/// On launch: find the cluster Harry was linked to (via the `harry` user's description) and
+/// reconnect. Returns None when the Atlas CLI isn't signed in or nothing was linked yet.
+#[tauri::command]
+pub async fn atlas_restore(app: AppHandle, state: State<'_, AppState>) -> Result<Option<Connected>, String> {
+    let Ok(v) = atlas_json(&app, &["projects", "list", "--output", "json"]).await else { return Ok(None) };
+    let projects = v.get("results").cloned().unwrap_or(v);
+    for p in projects.as_array().cloned().unwrap_or_default() {
+        let Some(pid) = p["id"].as_str() else { continue };
+        let Ok(u) = atlas_json(&app, &["dbusers", "describe", USER, "--projectId", pid, "--output", "json"]).await else { continue };
+        if let Some(cluster) = u["description"].as_str().and_then(|d| d.strip_prefix(DESC)) {
+            return link(&app, &state, pid, cluster).await.map(Some);
+        }
+    }
+    Ok(None)
 }

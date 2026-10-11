@@ -1,4 +1,4 @@
-// Data sources Harry can query: the bundled demo CRM, a live cluster (via mongosh), and
+// Data sources Harry can query: a CRM pulled through Composio, a live cluster (via mongosh), and
 // tabular files from granted folders. Local sources run pipelines with mingo after the same
 // Rust policy gate that guards live clusters.
 
@@ -6,11 +6,6 @@ import { aggregate } from "mingo";
 import { api, FileEntry } from "./api";
 import { parseDelimited } from "./csv";
 import { CollectionSchema, inferFields } from "./schema";
-import reps from "../../demo-crm/reps.json";
-import accounts from "../../demo-crm/accounts.json";
-import deals from "../../demo-crm/deals.json";
-import activities from "../../demo-crm/activities.json";
-import contacts from "../../demo-crm/contacts.json";
 
 type Doc = Record<string, unknown>;
 
@@ -18,7 +13,7 @@ export type Doc_ = Doc;
 export type Note = { origin: string; text: string };
 
 export type SourceSet = {
-  kind: "demo" | "mongo";
+  kind: "crm" | "mongo";
   label: string;
   schemas: CollectionSchema[];
   local: Map<string, Doc[]>; // key "db.collection"
@@ -28,17 +23,6 @@ export type SourceSet = {
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
 const reviveDates = (rows: Doc[]) =>
   rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" && ISO.test(v) ? new Date(v) : v])));
-
-export function demoSources(): SourceSet {
-  const local = new Map<string, Doc[]>();
-  const data: Record<string, Doc[]> = { reps, accounts, contacts, deals, activities } as Record<string, Doc[]>;
-  const schemas: CollectionSchema[] = [];
-  for (const [name, rows] of Object.entries(data)) {
-    local.set(`crm.${name}`, reviveDates(rows));
-    schemas.push({ db: "crm", name, count: rows.length, fields: inferFields(rows.slice(0, 60)), source: "demo" });
-  }
-  return { kind: "demo", label: "Demo CRM", schemas, local, notes: [] };
-}
 
 export async function mongoSources(label: string): Promise<SourceSet> {
   const dbs = await api.mongoSample();

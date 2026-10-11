@@ -1,99 +1,127 @@
-//! Harry's own state, one JSON file per collection, owned by Rust so the action gate reads the
-//! same records the UI approved. Collection names mirror the Atlas data model in PLAN.md.
+//! Harry's own state, persisted only in MongoDB (database `harry`, one collection each) and owned
+//! by Rust so the action gate reads the same records the UI approved. Nothing is kept on disk.
 
-use serde_json::{json, Map, Value};
-use std::path::PathBuf;
-use std::sync::Mutex;
+use futures_util::TryStreamExt;
+use mongodb::bson::{self, doc, Bson, Document};
+use mongodb::options::{ClientOptions, ReturnDocument};
+use mongodb::{Client, Database};
+use serde::Serialize;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::RwLock;
 
 pub const COLLECTIONS: &[&str] = &[
-    "settings", "outbox", "interactions", "runs", "calls", "insights", "playbooks", "evals", "llm_cache", "optouts", "traces",
+    "settings", "outbox", "interactions", "runs", "calls", "insights", "playbooks", "evals", "llm_cache", "optouts", "traces", "memory", "grants",
 ];
+const DB: &str = "harry";
 
 #[derive(Default)]
 pub struct Store {
-    lock: Mutex<()>,
-}
-
-fn dir(app: &AppHandle) -> PathBuf {
-    let d = app.path().app_data_dir().unwrap_or_else(|_| crate::cli::home().join(".harry")).join("store");
-    let _ = std::fs::create_dir_all(&d);
-    d
+    db: RwLock<Option<(Database, String)>>,
 }
 
 fn check(coll: &str) -> Result<(), String> {
     if COLLECTIONS.contains(&coll) { Ok(()) } else { Err(format!("unknown collection {coll}")) }
 }
 
-pub fn read(app: &AppHandle, coll: &str) -> Vec<Value> {
-    std::fs::read_to_string(dir(app).join(format!("{coll}.json")))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+fn to_value(d: Document) -> Value {
+    Bson::Document(d).into_relaxed_extjson()
 }
 
-fn write(app: &AppHandle, coll: &str, docs: &[Value]) -> Result<(), String> {
-    let d = dir(app);
-    let tmp = d.join(format!("{coll}.json.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec(docs).unwrap()).map_err(|e| e.to_string())?;
-    std::fs::rename(tmp, d.join(format!("{coll}.json"))).map_err(|e| e.to_string())
+fn to_doc(v: &Value) -> Result<Document, String> {
+    bson::to_document(v).map_err(|e| e.to_string())
 }
 
-pub fn get(app: &AppHandle, coll: &str, id: &str) -> Option<Value> {
-    read(app, coll).into_iter().find(|d| d["_id"] == id)
+/// Connect the persistent store. Only ever called with a URI built from the Atlas CLI.
+pub async fn connect(app: &AppHandle, uri: &str) -> Result<(), String> {
+    let mut opts = ClientOptions::parse(uri).await.map_err(|e| e.to_string())?;
+    opts.app_name = Some("harry".into());
+    opts.server_selection_timeout = Some(std::time::Duration::from_secs(8));
+    let client = Client::with_options(opts).map_err(|e| e.to_string())?;
+    let db = client.database(DB);
+    db.run_command(doc! { "ping": 1 }).await.map_err(|e| format!("Could not reach the cluster: {e}"))?;
+    let host = uri.split('@').next_back().unwrap_or("").split(['/', '?']).next().unwrap_or("").to_string();
+    *app.state::<Store>().db.write().await = Some((db, host));
+    Ok(())
+}
+
+const NOT_CONNECTED: &str = "Connect MongoDB Atlas first: Harry keeps all of its data there";
+
+async fn database(app: &AppHandle) -> Result<Database, String> {
+    app.state::<Store>().db.read().await.as_ref().map(|(d, _)| d.clone()).ok_or_else(|| NOT_CONNECTED.into())
+}
+
+pub async fn read(app: &AppHandle, coll: &str) -> Result<Vec<Value>, String> {
+    let cur = database(app).await?.collection::<Document>(coll).find(doc! {}).await.map_err(|e| e.to_string())?;
+    Ok(cur.try_collect::<Vec<_>>().await.map_err(|e| e.to_string())?.into_iter().map(to_value).collect())
+}
+
+pub async fn get(app: &AppHandle, coll: &str, id: &str) -> Result<Option<Value>, String> {
+    let d = database(app).await?.collection::<Document>(coll).find_one(doc! { "_id": id }).await.map_err(|e| e.to_string())?;
+    Ok(d.map(to_value))
 }
 
 /// Merge `patch` into the document with the same `_id` (insert if missing).
-pub fn upsert(app: &AppHandle, store: &Store, coll: &str, patch: Value) -> Result<Value, String> {
+pub async fn upsert(app: &AppHandle, coll: &str, patch: Value) -> Result<Value, String> {
     check(coll)?;
-    let _g = store.lock.lock().unwrap();
     let id = patch["_id"].as_str().ok_or("document needs a string _id")?.to_string();
-    let mut docs = read(app, coll);
-    let merged = match docs.iter_mut().find(|d| d["_id"] == id.as_str()) {
-        Some(existing) => {
-            let obj: &mut Map<String, Value> = existing.as_object_mut().unwrap();
-            for (k, v) in patch.as_object().unwrap() {
-                obj.insert(k.clone(), v.clone());
-            }
-            existing.clone()
-        }
-        None => {
-            docs.push(patch.clone());
-            patch
-        }
-    };
-    write(app, coll, &docs)?;
-    Ok(merged)
+    let db = database(app).await?;
+    let mut set = to_doc(&patch)?;
+    set.remove("_id");
+    let update = if set.is_empty() { doc! { "$setOnInsert": { "_id": &id } } } else { doc! { "$set": set } };
+    let d = db
+        .collection::<Document>(coll)
+        .find_one_and_update(doc! { "_id": &id }, update)
+        .upsert(true)
+        .return_document(ReturnDocument::After)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("upsert returned nothing")?;
+    Ok(to_value(d))
+}
+
+#[derive(Serialize)]
+pub struct StoreStatus {
+    persistent: bool,
+    host: Option<String>,
 }
 
 #[tauri::command]
-pub fn store_list(app: AppHandle, coll: String) -> Result<Vec<Value>, String> {
+pub async fn store_status(store: State<'_, Store>) -> Result<StoreStatus, String> {
+    let host = store.db.read().await.as_ref().map(|(_, h)| h.clone());
+    Ok(StoreStatus { persistent: host.is_some(), host })
+}
+
+#[tauri::command]
+pub async fn store_list(app: AppHandle, coll: String) -> Result<Vec<Value>, String> {
     check(&coll)?;
-    Ok(read(&app, &coll))
+    read(&app, &coll).await
 }
 
 #[tauri::command]
-pub fn store_upsert(app: AppHandle, store: State<'_, Store>, coll: String, doc: Value) -> Result<Value, String> {
+pub async fn store_upsert(app: AppHandle, coll: String, doc: Value) -> Result<Value, String> {
     if coll == "outbox" && doc.get("status").is_some_and(|s| s == "approved" || s == "sending" || s == "sent") {
         return Err("Outbox status can only be advanced by approve/send".into());
     }
     if coll == "outbox" && doc.get("approvedHash").is_some() {
         return Err("approvedHash is set by approval only".into());
     }
-    upsert(&app, &store, &coll, doc)
+    upsert(&app, &coll, doc).await
 }
 
 #[tauri::command]
-pub fn store_reset(app: AppHandle, store: State<'_, Store>, colls: Vec<String>) -> Result<(), String> {
-    let _g = store.lock.lock().unwrap();
+pub async fn store_reset(app: AppHandle, colls: Vec<String>) -> Result<(), String> {
+    for c in &colls {
+        check(c)?;
+    }
+    let db = database(&app).await?;
     for c in colls {
-        check(&c)?;
-        write(&app, &c, &[])?;
+        db.collection::<Document>(&c).delete_many(doc! {}).await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-pub fn settings(app: &AppHandle) -> Value {
+pub async fn settings(app: &AppHandle) -> Result<Value, String> {
     let defaults = json!({
         "_id": "settings",
         "demoMode": true,
@@ -104,11 +132,11 @@ pub fn settings(app: &AppHandle) -> Value {
         "autoSend": {},
         "mailToolkit": "gmail",
     });
-    let mut s = get(app, "settings", "settings").unwrap_or_else(|| defaults.clone());
+    let mut s = get(app, "settings", "settings").await?.unwrap_or_else(|| defaults.clone());
     for (k, v) in defaults.as_object().unwrap() {
         if s.get(k).is_none() {
             s[k] = v.clone();
         }
     }
-    s
+    Ok(s)
 }

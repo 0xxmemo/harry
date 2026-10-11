@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
-    "app": "tauri dev",
-    "demo:gen": "node scripts/gen-demo.mjs"
+    "app": "tauri dev"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

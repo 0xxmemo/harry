@@ -42,16 +42,7 @@ async fn eval(app: &AppHandle, js: &str, envs: &[(&str, &str)]) -> Result<Value,
     serde_json::from_str(last).map_err(|e| format!("could not parse mongosh output: {e}"))
 }
 
-#[tauri::command]
-pub fn mongo_set_uri(state: State<'_, AppState>, uri: String) -> Result<(), String> {
-    let uri = uri.trim().to_string();
-    if !(uri.starts_with("mongodb://") || uri.starts_with("mongodb+srv://")) {
-        return Err("Connection strings start with mongodb:// or mongodb+srv://".into());
-    }
-    *state.uri.lock().unwrap() = Some(uri);
-    Ok(())
-}
-
+/// Stop querying the cluster directly. Harry's persistent store stays connected.
 #[tauri::command]
 pub fn mongo_disconnect(state: State<'_, AppState>) {
     *state.uri.lock().unwrap() = None;

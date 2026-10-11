@@ -1,27 +1,38 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
+import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { BookOpen, Database, FolderOpen, FolderPlus, Play, ShieldAlert, ShieldX, Sparkles, Trash2, Wand2, X } from "lucide-react";
 import { api, FileEntry } from "../lib/api";
-import { emptyMemory, Memory, saveMemory } from "../lib/memory";
+import { emptyMemory, knowledgeCount, Memory, saveMemory } from "../lib/memory";
 import { SourceSet } from "../lib/sources";
-import { Button, Card, cx, ErrorBox, errText, Pill } from "../components/ui";
+import { askHarry } from "../lib/nav";
+import { Button, Card, cx, EmptyState, ErrorBox, errText, Pill, SectionLabel } from "../components/ui";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export default function Brain({
-  src,
-  memory,
-  roots,
-  files,
-  onRoots,
-  onMemory,
-}: {
-  src: SourceSet;
-  memory: Memory;
-  roots: string[];
-  files: FileEntry[];
-  onRoots: (r: string[]) => void;
-  onMemory: (m?: Memory) => void;
-}) {
+const ago = (iso: string) => {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
+const KIND = {
+  glossary: { icon: BookOpen, label: "Learned a term", tone: "text-sky-300 bg-sky-400/10" },
+  scar: { icon: ShieldAlert, label: "Learned from a mistake", tone: "text-amber-300 bg-amber-400/10" },
+  skill: { icon: Wand2, label: "Saved a query", tone: "text-primary bg-primary/10" },
+  voice: { icon: Sparkles, label: "Learned your style", tone: "text-violet-300 bg-violet-400/10" },
+  rule: { icon: Sparkles, label: "Changed a rule", tone: "text-primary bg-primary/10" },
+} as const;
+
+export default function Brain({ src, memory, roots, files, onRoots, onMemory }: { src: SourceSet; memory: Memory; roots: string[]; files: FileEntry[]; onRoots: (r: string[]) => void; onMemory: (m?: Memory) => void }) {
   const [err, setErr] = useState("");
-  const [tab, setTab] = useState<"memory" | "schema" | "folders">("memory");
+  const total = knowledgeCount(memory);
+  const approved = memory.versions.filter((v) => v.gate === "approved");
+  const growth = approved.map((_, i) => ({ i, n: i + 1 }));
+  const traces = memory.traces;
+  const firstTry = (t: typeof traces) => (t.length ? Math.round((t.filter((x) => x.retries === 0 && x.ok).length / t.length) * 100) : 0);
+  const half = Math.floor(traces.length / 2);
 
   const add = async () => {
     setErr("");
@@ -34,172 +45,163 @@ export default function Brain({
     }
   };
 
-  const traces = memory.traces;
-  const half = Math.floor(traces.length / 2);
-  const rate = (t: typeof traces) => (t.length ? t.filter((x) => x.retries === 0 && x.ok).length / t.length : 0);
-  const early = traces.slice(0, Math.max(half, 1));
-  const late = traces.slice(half);
-
   return (
-    <div className="h-full overflow-y-auto px-8 py-6">
-      <div className="mx-auto max-w-5xl">
-        <div className="grid grid-cols-4 gap-3">
-          <Stat n={memory.glossary.length} label="terms learned" />
-          <Stat n={memory.skills.length} label="proven queries" />
-          <Stat n={memory.scars.length} label="lessons from failures" />
-          <Stat
-            n={traces.length >= 4 ? `${Math.round(rate(early) * 100)}→${Math.round(rate(late) * 100)}%` : `${traces.length}`}
-            label={traces.length >= 4 ? "first-try success, early → recent" : "questions answered"}
-          />
-        </div>
-
-        <div className="mt-6 flex gap-1 rounded-lg border border-line bg-panel p-1 text-sm w-fit">
-          {(["memory", "schema", "folders"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={cx("rounded-md px-4 py-1.5 capitalize", tab === t ? "bg-white/10 text-white" : "text-mute")}>
-              {t === "memory" ? "What Harry learned" : t === "schema" ? "Schema map" : "Folders"}
-            </button>
-          ))}
-        </div>
-
-        {tab === "memory" && (
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <Section title="Glossary" empty="Correct an answer with “Teach Harry” to add terms.">
-              {memory.glossary.map((g) => (
-                <Row key={g.term} title={g.term} body={g.definition} />
-              ))}
-            </Section>
-            <Section title="Lessons from failures" empty="When a query fails and Harry repairs it, the lesson lands here.">
-              {memory.scars.map((s, i) => (
-                <Row key={i} title={s.lesson} body={`from: ${s.question}`} />
-              ))}
-            </Section>
-            <Section title="Proven queries" empty="Questions that returned results are saved and reused.">
-              {[...memory.skills].reverse().map((s, i) => (
-                <Row key={i} title={s.question} body={`${s.db}.${s.collection} · ${s.pipeline.length} stages · used ${s.uses}×`} />
-              ))}
-            </Section>
-            <Section title="Harness changes (versioned, gated)" empty="Every change Harry makes to itself is logged here.">
-              {[...memory.versions].reverse().slice(0, 40).map((v) => (
-                <div key={v.v} className="flex items-start gap-2 py-1.5 text-xs">
-                  <span className="font-mono text-mute">v{v.v}</span>
-                  <Pill tone={v.gate === "approved" ? "brand" : "bad"}>{v.gate}</Pill>
-                  <Pill>{v.kind}</Pill>
-                  <span className="selectable flex-1">{v.change}{v.reason ? ` (${v.reason})` : ""}</span>
-                </div>
-              ))}
-            </Section>
-            <div className="col-span-2 flex justify-end">
-              <Button
-                variant="danger"
-                onClick={async () => {
-                  if (!confirm("Erase everything Harry learned?")) return;
-                  const m = emptyMemory();
-                  await saveMemory(m);
-                  onMemory(m);
-                }}
-              >
-                Reset memory
-              </Button>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-4xl space-y-6 px-8 pt-10 pb-12">
+        {/* Hero */}
+        <Card className="relative overflow-hidden p-8">
+          <div className="absolute inset-x-0 bottom-0 h-24 opacity-60">
+            {growth.length > 1 && (
+              <ResponsiveContainer>
+                <AreaChart data={growth} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} /><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
+                  <Area dataKey="n" stroke="var(--chart-1)" strokeWidth={2} fill="url(#g)" type="monotone" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+          <div className="relative">
+            <div className="text-xs font-medium tracking-wider text-muted-foreground uppercase">Memory</div>
+            <div className="mt-2 flex items-baseline gap-3">
+              <span className="text-6xl font-semibold tracking-tight text-brand-2 tabular-nums">{total}</span>
+              <span className="text-lg text-muted-foreground">things Harry knows about your business</span>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-6 text-sm">
+              <Mini n={memory.glossary.length} label="terms" />
+              <Mini n={memory.skills.length} label="saved queries" />
+              <Mini n={memory.scars.length} label="lessons" />
+              {traces.length >= 4 && <Mini n={`${firstTry(traces.slice(0, half))}% → ${firstTry(traces.slice(half))}%`} label="right first try" />}
             </div>
           </div>
-        )}
+        </Card>
 
-        {tab === "schema" && (
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            {src.schemas.map((s) => (
-              <Card key={`${s.db}.${s.name}`} className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="font-mono text-sm">
-                    <span className="text-mute">{s.db}.</span>
-                    {s.name}
-                  </div>
-                  <div className="flex gap-1.5">
-                    {s.source === "file" && <Pill tone="warn">file</Pill>}
-                    <Pill>{s.count.toLocaleString()} docs</Pill>
-                  </div>
-                </div>
-                <div className="mt-3 space-y-1">
-                  {s.fields.slice(0, 16).map((f) => (
-                    <div key={f.path} className="flex gap-2 text-xs">
-                      <span className="w-40 truncate font-mono">{f.path}</span>
-                      <span className={f.types.length > 1 ? "text-amber-300" : "text-brand-2"}>{f.types.join(" | ")}</span>
-                      <span className="flex-1 truncate text-mute">{f.examples.join(", ")}</span>
-                      {f.presence < 0.9 && <span className="text-amber-300">{Math.round(f.presence * 100)}%</span>}
-                    </div>
-                  ))}
-                </div>
+        <Tabs defaultValue="learned">
+          <TabsList>
+            <TabsTrigger value="learned">Learned</TabsTrigger>
+            <TabsTrigger value="data">Your data</TabsTrigger>
+            <TabsTrigger value="folders">Folders {roots.length > 0 && <span className="text-muted-foreground">{roots.length}</span>}</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="learned" className="mt-5 space-y-6">
+            {total === 0 ? (
+              <Card className="py-14">
+                <EmptyState icon={<Sparkles />} title="Harry hasn't learned anything yet" action={<Button onClick={() => askHarry("Which open deals over $50k have stalled, and who owns them?")}><Play /> Ask a first question</Button>}>
+                  Ask him a question, correct an answer with “Teach Harry”, or let him fix a failed query. Everything he learns shows up here.
+                </EmptyState>
               </Card>
-            ))}
-          </div>
-        )}
+            ) : (
+              <>
+                {memory.glossary.length > 0 && (
+                  <section>
+                    <SectionLabel className="mb-2">Your team's vocabulary</SectionLabel>
+                    <div className="grid grid-cols-2 gap-2">
+                      {memory.glossary.map((g) => (
+                        <Card key={g.term} className="p-4">
+                          <div className="flex items-center gap-2 font-medium"><BookOpen className="size-4 text-sky-300" />{g.term}</div>
+                          <div className="selectable mt-1 text-sm text-muted-foreground">{g.definition}</div>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-        {tab === "folders" && (
-          <div className="mt-4 space-y-4">
+                {memory.skills.length > 0 && (
+                  <section>
+                    <SectionLabel className="mb-2">Questions Harry can answer instantly</SectionLabel>
+                    <div className="space-y-2">
+                      {[...memory.skills].sort((a, b) => b.uses - a.uses).map((s) => (
+                        <button key={s.question} onClick={() => askHarry(s.question)} className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:border-primary/50">
+                          <Wand2 className="size-4 shrink-0 text-primary" />
+                          <span className="min-w-0 flex-1 truncate text-sm">{s.question}</span>
+                          <span className="text-xs text-muted-foreground">used {s.uses}×</span>
+                          <span className="text-xs text-primary opacity-0 transition-opacity group-hover:opacity-100">Ask again →</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section>
+                  <SectionLabel className="mb-3">Timeline</SectionLabel>
+                  <div className="relative space-y-4 pl-6 before:absolute before:top-2 before:bottom-2 before:left-[11px] before:w-px before:bg-border">
+                    {[...memory.versions].reverse().slice(0, 30).map((v) => {
+                      const k = KIND[v.kind] ?? KIND.rule;
+                      const Icon = v.gate === "rejected" ? ShieldX : k.icon;
+                      return (
+                        <div key={v.v} className="relative">
+                          <span className={cx("absolute top-0 -left-6 flex size-6 items-center justify-center rounded-full ring-4 ring-background", v.gate === "rejected" ? "bg-destructive/15 text-destructive" : k.tone)}><Icon className="size-3.5" /></span>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground">{v.gate === "rejected" ? "Blocked by the policy gate" : k.label}</span>
+                            <span>·</span><span>{ago(v.at)}</span>
+                          </div>
+                          <div className="selectable mt-0.5 text-sm text-muted-foreground">{v.change}{v.reason ? ` (${v.reason})` : ""}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <div className="flex justify-end">
+                  <Button variant="ghost" size="sm" onClick={async () => { if (!confirm("Erase everything Harry learned?")) return; const m = emptyMemory(); await saveMemory(m); onMemory(m); }}>
+                    <Trash2 /> Reset memory
+                  </Button>
+                </div>
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="data" className="mt-5 space-y-3">
+            <p className="text-sm text-muted-foreground">What Harry sees in <span className="text-foreground">{src.label}</span>. Amber means mixed types or missing values, which he handles for you.</p>
+            <div className="grid grid-cols-2 gap-3">
+              {src.schemas.map((s) => (
+                <Card key={`${s.db}.${s.name}`} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-medium"><Database className="size-4 text-muted-foreground" />{s.name}</div>
+                    <Pill>{s.count.toLocaleString()} rows</Pill>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {s.fields.filter((f) => !f.path.includes(".")).slice(0, 18).map((f) => (
+                      <span key={f.path} title={`${f.types.join(" | ")} · e.g. ${f.examples.join(", ")}`} className={cx("rounded-md border px-1.5 py-0.5 font-mono text-[11px]", f.types.length > 1 || f.presence < 0.9 ? "border-amber-400/30 text-amber-300" : "text-muted-foreground")}>{f.path}</span>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="folders" className="mt-5 space-y-3">
             <Card className="p-5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="font-medium">Folders Harry can read</div>
-                  <div className="text-xs text-mute">CSV, TSV and JSON become queryable tables. Markdown and text become notes. Hidden files, secrets and keys are always skipped.</div>
+                  <div className="mt-0.5 text-sm text-muted-foreground">Spreadsheets become tables he can query; notes become context. Hidden files, keys and secrets are always skipped.</div>
                 </div>
-                <Button onClick={add}>+ Add folder</Button>
+                <Button onClick={add}><FolderPlus /> Add folder</Button>
               </div>
               <div className="mt-4 space-y-2">
-                {roots.length === 0 && <div className="text-sm text-mute">No folders yet.</div>}
+                {roots.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No folders shared yet.</div>}
                 {roots.map((r) => (
-                  <div key={r} className="flex items-center justify-between rounded-lg border border-line px-3 py-2">
-                    <span className="selectable font-mono text-xs">{r}</span>
-                    <Button variant="ghost" className="text-xs" onClick={async () => onRoots(await api.revokeFolder(r))}>
-                      Revoke
-                    </Button>
+                  <div key={r} className="flex items-center gap-3 rounded-lg border px-3 py-2">
+                    <FolderOpen className="size-4 text-muted-foreground" />
+                    <span className="selectable min-w-0 flex-1 truncate font-mono text-xs">{r}</span>
+                    <span className="text-xs text-muted-foreground">{files.filter((f) => f.path.startsWith(r)).length} files</span>
+                    <Button size="sm" variant="ghost" onClick={async () => onRoots(await api.revokeFolder(r))}><X /> Remove</Button>
                   </div>
                 ))}
               </div>
             </Card>
-            {files.length > 0 && (
-              <Card className="p-5">
-                <div className="mb-2 text-sm font-medium">{files.length} readable files</div>
-                <div className="max-h-72 space-y-1 overflow-y-auto">
-                  {files.map((f) => (
-                    <div key={f.path} className="flex justify-between text-xs">
-                      <span className="font-mono">{f.rel}</span>
-                      <span className="text-mute">{(f.size / 1024).toFixed(1)} KB</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
             <ErrorBox>{err}</ErrorBox>
-          </div>
-        )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
 }
 
-function Stat({ n, label }: { n: number | string; label: string }) {
+function Mini({ n, label }: { n: number | string; label: string }) {
   return (
-    <Card className="p-4">
-      <div className="text-3xl font-semibold text-brand-2 tabular-nums">{n}</div>
-      <div className="mt-0.5 text-xs text-mute">{label}</div>
-    </Card>
-  );
-}
-
-function Section({ title, empty, children }: { title: string; empty: string; children: React.ReactNode }) {
-  const list = Array.isArray(children) ? children : [children];
-  return (
-    <Card className="p-4">
-      <div className="mb-2 text-[11px] font-medium tracking-wide text-mute uppercase">{title}</div>
-      <div className="max-h-72 divide-y divide-line/60 overflow-y-auto">{list.length ? children : <div className="py-2 text-sm text-mute">{empty}</div>}</div>
-    </Card>
-  );
-}
-
-function Row({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="selectable py-2">
-      <div className="text-sm">{title}</div>
-      <div className="text-xs text-mute">{body}</div>
+    <div>
+      <span className="font-semibold tabular-nums">{n}</span> <span className="text-muted-foreground">{label}</span>
     </div>
   );
 }

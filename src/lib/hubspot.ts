@@ -1,5 +1,5 @@
 // Live HubSpot import through the user's Composio connection (`composio link hubspot`).
-// Read-only list calls, mapped into the same standard format as the demo CRM and CSV import.
+// Read-only list calls, mapped into Harry's standard crm.* collections.
 
 import { api } from "./api";
 import { inferFields } from "./schema";
@@ -75,7 +75,7 @@ export async function hubspotSources(): Promise<SourceSet> {
   const local = new Map<string, Doc[]>();
   const schemas = Object.entries(data).map(([name, docs]) => {
     local.set(`crm.${name}`, docs);
-    return { db: "crm", name, count: docs.length, fields: inferFields(docs.slice(0, 60)), source: "demo" as const };
+    return { db: "crm", name, count: docs.length, fields: inferFields(docs.slice(0, 60)), source: "crm" as const };
   });
-  return { kind: "demo", label: "HubSpot", schemas, local, notes: [] };
+  return { kind: "crm", label: "HubSpot", schemas, local, notes: [] };
 }

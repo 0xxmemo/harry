@@ -1,10 +1,15 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { ArrowRight, AudioLines, Check, Lightbulb, MessageSquareQuote, Plus, Upload, X } from "lucide-react";
 import { analyzeCall, Call, importCall, matchDeal, suggestDeals } from "../lib/calls";
 import { SourceSet } from "../lib/sources";
 import { store } from "../lib/store";
-import { Button, Card, cx, ErrorBox, errText, Pill, Spinner } from "../components/ui";
+import { go } from "../lib/nav";
+import { Button, Card, cx, errText, Pill, SectionLabel, Spinner } from "../components/ui";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Doc = Record<string, unknown>;
 
@@ -12,11 +17,10 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
   const [calls, setCalls] = useState<Call[]>([]);
   const [insights, setInsights] = useState<Doc[]>([]);
   const [sel, setSel] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [consent, setConsent] = useState(false);
   const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState("");
-  const [err, setErr] = useState("");
-  const [note, setNote] = useState("");
 
   const load = async () => {
     const [c, i] = await Promise.all([store.list<Call>("calls"), store.list<Doc>("insights")]);
@@ -27,17 +31,17 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
     load();
   }, []);
 
-  const ingest = async (paths: string[], dropped: boolean) => {
-    setErr("");
-    setNote("");
+  const ingest = async (paths: string[], skipConsent = false) => {
+    if (!consent && !skipConsent) return toast.error("Confirm that everyone was told the call was recorded.");
+    setBusy("import");
     for (const p of paths) {
-      setBusy("import");
       try {
-        const { call, duplicate } = await importCall(p, dropped, consent);
-        setNote(duplicate ? `${call.file} was already imported (same file hash). Nothing changed.` : `Imported ${call.file}: ${call.turns.length} turns`);
+        const { call, duplicate } = await importCall(p, true, true);
+        if (duplicate) toast.message(`${call.file} is already here`);
         setSel(call._id);
+        setAdding(false);
       } catch (e) {
-        setErr(errText(e));
+        toast.error(errText(e));
       }
     }
     setBusy("");
@@ -50,7 +54,7 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
       else if (e.payload.type === "leave") setHover(false);
       else if (e.payload.type === "drop") {
         setHover(false);
-        ingest(e.payload.paths, true);
+        ingest(e.payload.paths);
       }
     });
     return () => {
@@ -60,182 +64,184 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
 
   const call = calls.find((c) => c._id === sel) ?? null;
 
+  const importer = (
+    <div className="mx-auto max-w-xl py-16">
+      <div className="text-center">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-xl border bg-card text-primary"><AudioLines className="size-5" /></div>
+        <h1 className="mt-4 text-2xl font-semibold tracking-tight">Learn from a sales call</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Drop in a transcript. Harry matches the deal, scores the call with quotes, drafts the follow-up, and spots answers worth adding to the playbook.</p>
+      </div>
+
+      <label className="mt-8 flex cursor-pointer items-center gap-3 rounded-lg border bg-card px-4 py-3 text-sm">
+        <Checkbox checked={consent} onCheckedChange={(v) => setConsent(v === true)} />
+        Everyone on the call was told it was being recorded
+      </label>
+
+      <button
+        disabled={!consent || !!busy}
+        onClick={async () => {
+          const f = await open({ multiple: true, filters: [{ name: "Transcripts", extensions: ["txt", "vtt", "srt", "docx", "json"] }] });
+          if (f) ingest(Array.isArray(f) ? f : [f]);
+        }}
+        className={cx("mt-3 flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 transition-colors", consent ? "hover:border-primary/60 hover:bg-primary/5" : "opacity-50", hover && "border-primary bg-primary/10")}
+      >
+        {busy === "import" ? <Spinner className="size-6 text-primary" /> : <Upload className="size-6 text-muted-foreground" />}
+        <div className="text-sm font-medium">{consent ? "Drop a transcript here, or click to choose" : "Tick the box above first"}</div>
+        <div className="text-xs text-muted-foreground">Meet · Zoom · Teams · Otter · Fireflies · Fathom · Gong</div>
+      </button>
+
+    </div>
+  );
+
+  if (calls.length === 0) return <div className="h-full overflow-y-auto px-8">{importer}</div>;
+
   return (
-    <div className="relative grid h-full grid-cols-[320px_1fr] overflow-hidden">
-      {hover && (
-        <div className="pointer-events-none absolute inset-4 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-brand bg-brand/10 text-xl text-brand-2">
-          {consent ? "Drop the transcript" : "Tick the recording-consent box first"}
+    <div className="grid h-full grid-cols-[260px_minmax(0,1fr)]">
+      <div className="flex min-h-0 flex-col border-r">
+        <div className="flex items-center justify-between px-4 pt-10 pb-3">
+          <div className="text-sm font-medium">Calls</div>
+          <Button size="sm" variant="ghost" onClick={() => { setAdding(true); setSel(null); }}><Plus /> Add</Button>
         </div>
-      )}
-      <div className="flex flex-col overflow-hidden border-r border-line">
-        <div className="space-y-3 border-b border-line p-5">
-          <div className="text-sm font-medium">Call transcripts</div>
-          <div className="text-xs text-mute">Drop exports from Meet (.docx/.txt), Zoom (.vtt), Teams, Otter, Fireflies, Fathom, or Gong (.json).</div>
-          <label className="flex items-start gap-2 text-xs">
-            <input type="checkbox" className="mt-0.5" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            Participants were told this call was recorded
-          </label>
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={!consent || !!busy}
-            onClick={async () => {
-              const f = await open({ multiple: true, filters: [{ name: "Transcripts", extensions: ["txt", "vtt", "srt", "docx", "json"] }] });
-              if (f) ingest(Array.isArray(f) ? f : [f], true);
-            }}
-          >
-            {busy === "import" ? <Spinner /> : "+"} Import transcript
-          </Button>
-          {note && <div className="text-xs text-brand-2">{note}</div>}
-        </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {calls.map((c) => (
-            <button key={c._id} onClick={() => setSel(c._id)} className={cx("block w-full border-b border-line/60 px-5 py-3 text-left", sel === c._id ? "bg-brand/10" : "hover:bg-white/[0.03]")}>
-              <div className="truncate text-sm">{c.dealName ?? c.file}</div>
-              <div className="mt-1 flex gap-1.5">
-                <Pill>{c.format}</Pill>
-                <Pill tone={c.status === "analyzed" ? "brand" : "mute"}>{c.status}</Pill>
+            <button key={c._id} onClick={() => { setSel(c._id); setAdding(false); }} className={cx("relative block w-full px-4 py-3 text-left transition-colors", sel === c._id ? "bg-accent" : "hover:bg-accent/40")}>
+              {sel === c._id && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
+              <div className="truncate text-sm font-medium">{c.dealName?.split(" — ")[0] ?? c.file}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                {c.status === "analyzed" ? <><Check className="size-3 text-primary" /> {c.score?.filter((s) => s.met).length}/{c.score?.length} on checklist</> : <span className="text-amber-300">Pick the deal</span>}
               </div>
             </button>
           ))}
         </div>
       </div>
-
-      <div className="overflow-y-auto p-8">
-        <ErrorBox>{err}</ErrorBox>
-        {!call && (
-          <div className="flex h-full flex-col items-center justify-center text-center text-mute">
-            <div className="text-5xl">🎧</div>
-            <div className="mt-3 text-lg text-white">Drag a call transcript onto Harry</div>
-            <div className="mt-1 max-w-md text-sm">He matches the deal, scores the call against your checklist with quotes, drafts the follow-up, and turns great objection handling into a playbook rule.</div>
-            <div className="mt-3 text-xs">Samples: <span className="selectable font-mono">harry/demo-crm/calls/</span></div>
-          </div>
-        )}
-        {call && <CallView key={call._id} call={call} src={src} insight={insights.find((i) => i.callId === call._id)} busy={busy} setBusy={setBusy} setErr={setErr} reload={async () => { await load(); onChange(); }} />}
+      <div className="min-h-0 overflow-y-auto px-8">
+        {adding || !call ? importer : <CallView key={call._id} call={call} src={src} insight={insights.find((i) => i.callId === call._id)} busy={busy} setBusy={setBusy} reload={async () => { await load(); onChange(); }} />}
       </div>
     </div>
   );
 }
 
-function CallView({ call, src, insight, busy, setBusy, setErr, reload }: { call: Call; src: SourceSet; insight?: Doc; busy: string; setBusy: (s: string) => void; setErr: (s: string) => void; reload: () => Promise<void> }) {
+function CallView({ call, src, insight, busy, setBusy, reload }: { call: Call; src: SourceSet; insight?: Doc; busy: string; setBusy: (s: string) => void; reload: () => Promise<void> }) {
   const suggestions = suggestDeals(call, src);
   const speakers = [...new Set(call.turns.map((t) => t.speaker))];
   const reps = ((src.local.get("crm.reps") ?? []) as Doc[]).map((r) => String(r.name));
-  const [rep, setRep] = useState(call.repName ?? speakers.find((s) => reps.includes(s)) ?? speakers[0]);
+  const rep = call.repName ?? speakers.find((s) => reps.includes(s)) ?? speakers[0];
   const buyer = call.buyerName ?? speakers.find((s) => s !== rep) ?? "";
-  const act = async (id: string, fn: () => Promise<unknown>) => {
+  const act = async (id: string, fn: () => Promise<unknown>, ok?: string) => {
     setBusy(id);
-    setErr("");
     try {
       await fn();
+      if (ok) toast.success(ok);
     } catch (e) {
-      setErr(errText(e));
+      toast.error(errText(e));
     } finally {
       setBusy("");
       await reload();
     }
   };
 
+  if (!call.dealId) {
+    return (
+      <div className="mx-auto max-w-xl py-14">
+        <div className="text-xs text-muted-foreground">{call.file} · {call.turns.length} turns</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Which deal was this call about?</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{rep} talking with {buyer}. Harry ranked these from names and companies in the transcript.</p>
+        <div className="mt-6 space-y-2">
+          {suggestions.map((s, i) => (
+            <button key={String(s.deal._id)} disabled={!!busy} onClick={() => act("match", async () => { await matchDeal(call, s.deal, rep, buyer); await analyzeCall(call, src); }, "Call analyzed")}
+              className={cx("flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:border-primary/60", i === 0 && "border-primary/40")}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium">{String(s.deal.name)} {i === 0 && <Pill tone="brand">best match</Pill>}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">Matched on {s.why.join(", ")}</div>
+              </div>
+              {busy === "match" ? <Spinner className="text-primary" /> : <ArrowRight className="size-4 text-muted-foreground" />}
+            </button>
+          ))}
+          {suggestions.length === 0 && <div className="text-sm text-muted-foreground">No matching open deal found.</div>}
+        </div>
+        {busy === "match" && <div className="mt-4 text-center text-sm text-muted-foreground">Reading the call, scoring it and drafting a follow-up…</div>}
+      </div>
+    );
+  }
+
+  if (call.status !== "analyzed") {
+    return <div className="py-24 text-center"><Button disabled={!!busy} onClick={() => act("analyze", () => analyzeCall(call, src), "Call analyzed")}>{busy === "analyze" ? <Spinner /> : null} Analyze this call</Button></div>;
+  }
+
+  const met = call.score?.filter((s) => s.met).length ?? 0;
+  const total = call.score?.length ?? 0;
+
   return (
-    <div className="rise mx-auto max-w-4xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-6 py-10">
       <div>
-        <div className="text-xs text-mute">{call.file}</div>
-        <h2 className="text-2xl font-semibold">{call.dealName ?? "Which deal is this?"}</h2>
+        <div className="text-xs text-muted-foreground">{call.repName} with {call.buyerName} · {call.file}</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{call.dealName}</h1>
+        <p className="mt-2 leading-relaxed text-muted-foreground">{call.summary}</p>
+        {call.objections?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{call.objections.map((o) => <Pill key={o} tone="warn">{o}</Pill>)}</div> : null}
       </div>
 
-      {!call.dealId && (
-        <Card className="p-5">
-          <div className="flex items-center gap-3 text-sm">
-            <span className="text-mute">Rep on the call:</span>
-            <select value={rep} onChange={(e) => setRep(e.target.value)} className="rounded-md border border-line bg-black/30 px-2 py-1">
-              {speakers.map((s) => <option key={s}>{s}</option>)}
-            </select>
-            {!reps.includes(rep) && <Pill tone="warn">not on the rep roster, please confirm</Pill>}
-          </div>
-          <div className="mt-4 space-y-2">
-            {suggestions.length === 0 && <div className="text-sm text-mute">No matching deal found.</div>}
-            {suggestions.map((s) => (
-              <div key={String(s.deal._id)} className="flex items-center justify-between rounded-lg border border-line px-3 py-2">
-                <div>
-                  <div className="text-sm">{String(s.deal.name)}</div>
-                  <div className="text-xs text-mute">matched on {s.why.join(", ")}</div>
-                </div>
-                <Button className="py-1.5 text-xs" disabled={!!busy} onClick={() => act("match", async () => {
-                  await matchDeal(call, s.deal, rep, buyer);
-                  await analyzeCall(call, src);
-                })}>
-                  {busy === "match" ? <Spinner /> : "This one"}
-                </Button>
+      <div className="grid grid-cols-2 gap-3">
+        <Card className="flex flex-col p-4">
+          <div className="text-sm font-medium">Follow-up email is drafted</div>
+          <div className="mt-1 flex-1 text-xs text-muted-foreground">Written from what was actually said on the call.</div>
+          <Button size="sm" variant="outline" className="mt-3 self-start" onClick={() => go("pipeline")}>Review it <ArrowRight /></Button>
+        </Card>
+        {insight ? (
+          <Card className={cx("flex flex-col p-4", insight.status === "proposed" && "border-amber-400/40 bg-amber-400/5")}>
+            <div className="flex items-center gap-1.5 text-sm font-medium"><Lightbulb className="size-4 text-amber-300" /> {call.repName} found a winning answer</div>
+            <div className="mt-1 flex-1 text-xs text-muted-foreground">{String(insight.rule)}</div>
+            {insight.status === "proposed" ? (
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" onClick={() => act("ins", () => store.upsert("insights", { _id: String(insight._id), status: "approved", approvedAt: new Date().toISOString() }), "Rule approved for testing")}>Add to playbook</Button>
+                <Button size="sm" variant="ghost" onClick={() => act("ins", () => store.upsert("insights", { _id: String(insight._id), status: "rejected" }))}>Dismiss</Button>
+              </div>
+            ) : insight.status === "approved" ? (
+              <Button size="sm" variant="outline" className="mt-3 self-start" onClick={() => go("improve")}>Test it on buyers <ArrowRight /></Button>
+            ) : <div className="mt-3 text-xs text-muted-foreground">Dismissed</div>}
+          </Card>
+        ) : (
+          <Card className="p-4"><div className="text-sm font-medium">No new playbook rule</div><div className="mt-1 text-xs text-muted-foreground">Nothing stood out as a reusable answer on this call.</div></Card>
+        )}
+      </div>
+
+      <Tabs defaultValue="score">
+        <TabsList>
+          <TabsTrigger value="score">Scorecard {met}/{total}</TabsTrigger>
+          <TabsTrigger value="coach">Coaching</TabsTrigger>
+          <TabsTrigger value="next">Next call</TabsTrigger>
+          <TabsTrigger value="transcript">Transcript</TabsTrigger>
+        </TabsList>
+        <TabsContent value="score" className="mt-4 space-y-2">
+          {call.score?.map((s) => (
+            <Card key={s.item} className="p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">{s.met ? <Check className="size-4 text-primary" /> : <X className="size-4 text-destructive" />}{s.item}</div>
+              <div className="mt-1 ml-6 text-sm text-muted-foreground">{s.note}</div>
+              {s.quote && <div className="selectable mt-2 ml-6 flex gap-2 text-sm italic"><MessageSquareQuote className="mt-0.5 size-4 shrink-0 text-primary/70" />“{s.quote}”</div>}
+            </Card>
+          ))}
+          <div className="text-xs text-muted-foreground">Visible to the rep and their manager. Coaching, not ranking.</div>
+        </TabsContent>
+        <TabsContent value="coach" className="mt-4 space-y-2">
+          {call.coaching?.map((c, i) => <Card key={i} className="selectable p-4 text-sm">{c}</Card>)}
+        </TabsContent>
+        <TabsContent value="next" className="mt-4">
+          <Card className="p-5">
+            <SectionLabel className="mb-3">Ask on the next call</SectionLabel>
+            <ol className="selectable list-decimal space-y-2 pl-5 text-sm">{call.brief?.questions.map((q, i) => <li key={i}>{q}</li>)}</ol>
+            {call.brief?.cares_about.length ? <><SectionLabel className="mt-5 mb-2">They care about</SectionLabel><div className="flex flex-wrap gap-1.5">{call.brief.cares_about.map((c) => <Pill key={c}>{c}</Pill>)}</div></> : null}
+          </Card>
+        </TabsContent>
+        <TabsContent value="transcript" className="mt-4">
+          <Card className="selectable space-y-3 p-5 text-sm">
+            {call.turns.map((t, i) => (
+              <div key={i} className="grid grid-cols-[48px_1fr] gap-3">
+                <span className="pt-0.5 font-mono text-xs text-muted-foreground">{t.start}</span>
+                <div><div className={cx("text-xs font-medium", t.speaker === call.repName ? "text-brand-2" : "text-foreground")}>{t.speaker}</div><div className="mt-0.5 text-muted-foreground">{t.text}</div></div>
               </div>
             ))}
-          </div>
-        </Card>
-      )}
-
-      {call.dealId && call.status !== "analyzed" && (
-        <Button disabled={!!busy} onClick={() => act("analyze", () => analyzeCall(call, src))}>{busy === "analyze" ? <Spinner /> : null} Analyze call</Button>
-      )}
-
-      {call.status === "analyzed" && (
-        <>
-          <Card className="p-5">
-            <p className="selectable">{call.summary}</p>
-            {call.objections?.length ? <div className="mt-2 flex flex-wrap gap-1.5">{call.objections.map((o) => <Pill key={o} tone="warn">{o}</Pill>)}</div> : null}
           </Card>
-          <div className="grid grid-cols-2 gap-4">
-            <Card className="p-5">
-              <div className="mb-3 text-[11px] font-medium tracking-wide text-mute uppercase">Scorecard · {call.repName}</div>
-              <div className="space-y-3">
-                {call.score?.map((s) => (
-                  <div key={s.item} className="text-sm">
-                    <div className="flex items-center gap-2"><span className={s.met ? "text-brand" : "text-red-300"}>{s.met ? "✓" : "✕"}</span>{s.item}</div>
-                    {s.quote && <div className="selectable mt-1 ml-5 border-l-2 border-line pl-2 text-xs text-mute italic">“{s.quote}”</div>}
-                    <div className="mt-0.5 ml-5 text-xs text-mute">{s.note}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 text-[11px] text-mute">Visible to the rep and their manager only. Coaching, not ranking.</div>
-            </Card>
-            <div className="space-y-4">
-              <Card className="p-5">
-                <div className="mb-2 text-[11px] font-medium tracking-wide text-mute uppercase">Coaching</div>
-                <ul className="space-y-2 text-sm">{call.coaching?.map((c, i) => <li key={i} className="selectable">• {c}</li>)}</ul>
-              </Card>
-              <Card className="p-5">
-                <div className="mb-2 text-[11px] font-medium tracking-wide text-mute uppercase">Brief for the next call</div>
-                <ul className="selectable space-y-1 text-sm">{call.brief?.questions.map((q, i) => <li key={i}>? {q}</li>)}</ul>
-              </Card>
-            </div>
-          </div>
-          {insight && (
-            <Card className="border-amber-400/40 bg-amber-400/5 p-5">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-medium tracking-wide text-amber-300 uppercase">Proposed playbook rule · from {String(insight.rep)}</div>
-                <Pill tone={insight.status === "approved" ? "brand" : insight.status === "rejected" ? "bad" : "warn"}>{String(insight.status)}</Pill>
-              </div>
-              <div className="selectable mt-2 font-medium">{String(insight.rule)}</div>
-              <div className="selectable mt-2 border-l-2 border-amber-400/40 pl-2 text-sm text-mute italic">“{String(insight.quote)}”</div>
-              {insight.status === "proposed" && (
-                <div className="mt-3 flex gap-2">
-                  <Button onClick={() => act("ins", () => store.upsert("insights", { _id: String(insight._id), status: "approved", approvedAt: new Date().toISOString() }))}>Approve for testing</Button>
-                  <Button variant="ghost" onClick={() => act("ins", () => store.upsert("insights", { _id: String(insight._id), status: "rejected" }))}>Dismiss</Button>
-                </div>
-              )}
-              {insight.status === "approved" && <div className="mt-2 text-xs text-mute">Queued. It ships only if it beats the current playbook on held-out buyers (Improve tab).</div>}
-            </Card>
-          )}
-          <div className="text-sm text-brand-2">A follow-up recapping this call is waiting in the Pipeline outbox.</div>
-        </>
-      )}
-
-      <Card className="p-5">
-        <div className="mb-2 text-[11px] font-medium tracking-wide text-mute uppercase">Transcript</div>
-        <div className="selectable max-h-96 space-y-2 overflow-y-auto text-sm">
-          {call.turns.map((t, i) => (
-            <div key={i}><span className="font-mono text-xs text-mute">{t.start}</span> <span className={t.speaker === (call.repName ?? rep) ? "text-brand-2" : "text-white"}>{t.speaker}:</span> {t.text}</div>
-          ))}
-        </div>
-      </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

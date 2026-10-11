@@ -4,12 +4,12 @@
 
 use crate::cli;
 use crate::gate;
-use crate::store::{self, Store};
+use crate::store;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -169,16 +169,16 @@ pub fn content_hash(item: &Value) -> String {
 
 /// Human approval: freezes the exact content that may be sent.
 #[tauri::command]
-pub fn outbox_approve(app: AppHandle, store: State<'_, Store>, id: String) -> Result<Value, String> {
-    let item = store::get(&app, "outbox", &id).ok_or("outbox item not found")?;
+pub async fn outbox_approve(app: AppHandle, id: String) -> Result<Value, String> {
+    let item = store::get(&app, "outbox", &id).await?.ok_or("outbox item not found")?;
     if item["status"] != "draft" {
         return Err(format!("item is {}, not a draft", item["status"]));
     }
-    gate::check_message(&item, &store::settings(&app))?;
-    store::upsert(&app, &store, "outbox", json!({
+    gate::check_message(&item, &store::settings(&app).await?)?;
+    store::upsert(&app, "outbox", json!({
         "_id": id, "status": "approved", "approvedHash": content_hash(&item),
         "approvedAt": chrono::Utc::now().to_rfc3339(),
-    }))
+    })).await
 }
 
 fn find_str(v: &Value, keys: &[&str]) -> Option<String> {
@@ -206,8 +206,8 @@ async fn already_sent(app: &AppHandle, item: &Value) -> bool {
 }
 
 #[tauri::command]
-pub async fn outbox_send(app: AppHandle, store: State<'_, Store>, id: String) -> Result<Value, String> {
-    let item = store::get(&app, "outbox", &id).ok_or("outbox item not found")?;
+pub async fn outbox_send(app: AppHandle, id: String) -> Result<Value, String> {
+    let item = store::get(&app, "outbox", &id).await?.ok_or("outbox item not found")?;
     let status = item["status"].as_str().unwrap_or("");
     if status == "sent" {
         return Ok(item);
@@ -218,14 +218,14 @@ pub async fn outbox_send(app: AppHandle, store: State<'_, Store>, id: String) ->
     if item["approvedHash"].as_str() != Some(content_hash(&item).as_str()) {
         return Err("The message changed after approval; approve it again".into());
     }
-    let settings = store::settings(&app);
+    let settings = store::settings(&app).await?;
     gate::check_message(&item, &settings)?;
-    gate::check_caps(&item, &store::read(&app, "outbox"), &store::read(&app, "optouts"), &settings)?;
+    gate::check_caps(&item, &store::read(&app, "outbox").await?, &store::read(&app, "optouts").await?, &settings)?;
 
     if status == "sending" && already_sent(&app, &item).await {
-        return store::upsert(&app, &store, "outbox", json!({ "_id": id, "status": "sent", "recoveredAfterCrash": true }));
+        return store::upsert(&app, "outbox", json!({ "_id": id, "status": "sent", "recoveredAfterCrash": true })).await;
     }
-    store::upsert(&app, &store, "outbox", json!({ "_id": id, "status": "sending", "sendingAt": chrono::Utc::now().to_rfc3339() }))?;
+    store::upsert(&app, "outbox", json!({ "_id": id, "status": "sending", "sendingAt": chrono::Utc::now().to_rfc3339() })).await?;
 
     let thread = item["threadId"].as_str().filter(|t| !t.is_empty());
     let (slug, data) = match thread {
@@ -243,18 +243,18 @@ pub async fn outbox_send(app: AppHandle, store: State<'_, Store>, id: String) ->
         return Err(format!("Send failed: {msg}"));
     }
     let v = parsed.unwrap_or(Value::Null);
-    store::upsert(&app, &store, "outbox", json!({
+    store::upsert(&app, "outbox", json!({
         "_id": id, "status": "sent", "sentAt": chrono::Utc::now().to_rfc3339(),
         "threadId": find_str(&v, &["threadId", "thread_id"]).or(thread.map(String::from)),
         "messageId": find_str(&v, &["id", "messageId", "message_id"]),
-    }))
+    })).await
 }
 
 /// Pull replies for sent threads into `interactions`. Returns the new interactions.
 #[tauri::command]
-pub async fn fetch_replies(app: AppHandle, store: State<'_, Store>) -> Result<Vec<Value>, String> {
-    let sent: Vec<Value> = store::read(&app, "outbox").into_iter().filter(|o| o["status"] == "sent").collect();
-    let known: Vec<String> = store::read(&app, "interactions").iter().filter_map(|i| i["messageId"].as_str().map(String::from)).collect();
+pub async fn fetch_replies(app: AppHandle) -> Result<Vec<Value>, String> {
+    let sent: Vec<Value> = store::read(&app, "outbox").await?.into_iter().filter(|o| o["status"] == "sent").collect();
+    let known: Vec<String> = store::read(&app, "interactions").await?.iter().filter_map(|i| i["messageId"].as_str().map(String::from)).collect();
     let mut added = vec![];
     for item in sent {
         let to = item["to"].as_str().unwrap_or_default();
@@ -280,9 +280,9 @@ pub async fn fetch_replies(app: AppHandle, store: State<'_, Store>) -> Result<Ve
                 "messageId": mid, "from": to, "text": text.chars().take(4000).collect::<String>(), "outcome": outcome,
                 "at": chrono::Utc::now().to_rfc3339(),
             });
-            store::upsert(&app, &store, "interactions", doc.clone())?;
+            store::upsert(&app, "interactions", doc.clone()).await?;
             if outcome == "unsubscribe" {
-                store::upsert(&app, &store, "optouts", json!({ "_id": to, "at": chrono::Utc::now().to_rfc3339() }))?;
+                store::upsert(&app, "optouts", json!({ "_id": to, "at": chrono::Utc::now().to_rfc3339() })).await?;
             }
             added.push(doc);
         }

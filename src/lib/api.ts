@@ -25,9 +25,10 @@ export const api = {
     return Array.isArray(v) ? v : v.results ?? [];
   },
   atlasConnect: (projectId: string, cluster: string) =>
-    invoke<{ username: string; host: string; expires: string }>("atlas_connect", { projectId, cluster }),
+    invoke<{ username: string; host: string }>("atlas_connect", { projectId, cluster }),
 
-  mongoSetUri: (uri: string) => invoke<void>("mongo_set_uri", { uri }),
+  storeStatus: () => invoke<{ persistent: boolean; host: string | null }>("store_status"),
+  atlasRestore: () => invoke<{ username: string; host: string } | null>("atlas_restore"),
   mongoDisconnect: () => invoke<void>("mongo_disconnect"),
   mongoSample: () => invoke<SampledDb[]>("mongo_sample"),
   mongoAggregate: (db: string, collection: string, pipeline: unknown[]) =>

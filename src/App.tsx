@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
-import { knowledgeCount, loadMemory, Memory } from "./lib/memory";
-import { demoSources, loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
+import { emptyMemory, knowledgeCount, loadMemory, Memory } from "./lib/memory";
+import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
 import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp, Workflow } from "lucide-react";
 import { Button, cx, Dot, EmptyState, errText, SectionLabel } from "./components/ui";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,14 +19,14 @@ import { unfinishedRun } from "./lib/followup";
 import { linkedToolkits } from "./views/Setup";
 import BrainView from "./views/Brain";
 
-type View = "setup" | "connect" | "pipeline" | "calls" | "improve" | "ask" | "brain";
+import type { View } from "./lib/nav";
 
 export default function App() {
   const [view, setView] = useState<View>("setup");
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [base, setBase] = useState<SourceSet | null>(null);
   const [src, setSrc] = useState<SourceSet | null>(null);
-  const [memory, setMemory] = useState<Memory | null>(null);
+  const [memory, setMemory] = useState<Memory | null>(emptyMemory());
   const [roots, setRoots] = useState<string[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [, bump] = useState(0);
@@ -34,21 +34,35 @@ export default function App() {
   const [pipelineId, setPipelineId] = useState("saas");
   const [composio, setComposio] = useState<{ logged_in: boolean; linked: string[] } | null>(null);
   const [resumable, setResumable] = useState(false);
+  const [storeHost, setStoreHost] = useState<string | null>(null);
+  // Everything Harry keeps lives in MongoDB, so state loads only once the store is connected.
+  const loadStored = useCallback(async () => {
+    const s = await api.storeStatus().catch(() => null);
+    setStoreHost(s?.host ?? null);
+    if (!s?.persistent) return;
+    loadMemory().then(setMemory);
+    getSettings().then((x) => x.pipeline && setPipelineId(x.pipeline)).catch(() => {});
+    unfinishedRun().then((r) => setResumable(!!r)).catch(() => {});
+    api.listRoots().then(setRoots);
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) {
       setBoot("Harry runs as a desktop app. Start it with `bun run app`.");
       return;
     }
-    loadMemory().then(setMemory);
-    getSettings().then((s) => s.pipeline && setPipelineId(s.pipeline));
-    unfinishedRun().then((r) => setResumable(!!r));
+    api.atlasRestore().then(loadStored).catch(() => loadStored());
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
-    api.listRoots().then(setRoots);
     api.authStatus().then((a) => {
       setAuth(a);
       if (a.openllm) setView("connect");
     });
+  }, []);
+
+  useEffect(() => {
+    const h = (e: Event) => setView((e as CustomEvent<View>).detail);
+    window.addEventListener("harry-nav", h);
+    return () => window.removeEventListener("harry-nav", h);
   }, []);
 
   // Re-merge granted folder files into whatever source is active.
@@ -71,6 +85,14 @@ export default function App() {
     api.authStatus().then(setAuth);
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
   }, []);
+  useEffect(() => {
+    window.addEventListener("harry-status", refreshAuth);
+    window.addEventListener("focus", refreshAuth);
+    return () => {
+      window.removeEventListener("harry-status", refreshAuth);
+      window.removeEventListener("focus", refreshAuth);
+    };
+  }, [refreshAuth]);
   const pipeline = PIPELINES[pipelineId];
 
   if (boot) return <div className="flex h-full items-center justify-center text-muted-foreground">{boot}</div>;
@@ -88,8 +110,8 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
     <div className="flex h-full bg-background">
-      <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar">
-        <div className="drag h-11" />
+      <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
+        <div data-tauri-drag-region className="h-11 shrink-0" />
         <div className="flex items-center gap-2.5 px-5 pb-5">
           <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_24px_-4px] shadow-primary/60">
             <span className="text-sm font-bold">H</span>
@@ -175,40 +197,34 @@ export default function App() {
               ["OpenLLM", auth?.openllm, !auth],
               ["MongoDB Atlas", auth?.atlas, !auth],
               ["Composio", composio?.logged_in, !composio],
+              ["Mongo store", !!storeHost, !storeHost],
             ].map(([label, ok, warn]) => (
               <div key={String(label)} className="flex items-center gap-2 text-muted-foreground">
                 <Dot ok={!!ok} warn={!!warn} />
                 <span className="flex-1">{label as string}</span>
                 {label === "Composio" && composio?.linked.length ? <span className="truncate text-[11px]">{composio.linked.length} linked</span> : null}
+                {label === "Mongo store" ? <span className="truncate text-[11px]">{storeHost ? "connected" : "not connected"}</span> : null}
               </div>
             ))}
           </button>
         </div>
       </aside>
 
-      <main className="relative flex-1 overflow-hidden">
-        <div className="drag absolute inset-x-0 top-0 z-10 h-6" />
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1">
+        
         {view === "setup" && (
           <Setup
             onReady={() => {
               refreshAuth();
               setView("connect");
             }}
-            onSkip={() => {
-              refreshAuth();
-              setBase(demoSources());
-              setView("pipeline");
-            }}
           />
         )}
         {view === "connect" && (
           <Connect
             atlasReady={!!auth?.atlas}
-            onDemo={() => {
-              api.mongoDisconnect();
-              setBase(demoSources());
-              setView("pipeline");
-            }}
+            storeReady={!!storeHost}
+            hubspotLinked={!!composio?.linked.some((l) => /hubspot/i.test(l))}
             onImported={(s) => {
               api.mongoDisconnect();
               setBase(s);
@@ -216,6 +232,7 @@ export default function App() {
             }}
             onConnected={async (label) => {
               try {
+                await loadStored();
                 setBase(await mongoSources(label));
                 setView("ask");
               } catch (e) {
@@ -226,8 +243,8 @@ export default function App() {
         )}
         {src && view === "ask" && <Ask key={src.label} src={src} memory={memory} onMemory={() => bump((n) => n + 1)} />}
         {src && src.kind === "mongo" && (view === "pipeline" || view === "calls") && (
-          <EmptyState icon={<Database />} title="Live clusters are read-only" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
-            Ask Harry works on live clusters. Load the demo CRM or import a CSV export to run the follow-up agent.
+          <EmptyState icon={<Database />} title="Cluster data is read-only" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
+            Ask Harry works on live clusters. Pull your CRM from HubSpot to run the follow-up agent.
           </EmptyState>
         )}
         {src && src.kind !== "mongo" && view === "pipeline" && <Pipeline key={pipeline.id} src={src} pipeline={pipeline} onChange={() => bump((n) => n + 1)} />}

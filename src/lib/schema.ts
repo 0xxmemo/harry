@@ -2,7 +2,7 @@
 // and what it sends to the model as context.
 
 export type Field = { path: string; types: string[]; examples: string[]; presence: number };
-export type CollectionSchema = { db: string; name: string; count: number; fields: Field[]; source: "mongo" | "demo" | "file"; origin?: string };
+export type CollectionSchema = { db: string; name: string; count: number; fields: Field[]; source: "mongo" | "crm" | "file"; origin?: string };
 
 const typeOf = (v: unknown): string => {
   if (v === null || v === undefined) return "null";
