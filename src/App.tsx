@@ -47,8 +47,14 @@ export default function App() {
 
   const restore = useCallback(async () => {
     setLinking("Linking Harry's store…");
-    try { await api.atlasRestore(); } catch (e) { setLinkErr(errText(e)); }
+    let c = null as Awaited<ReturnType<typeof api.atlasRestore>>;
+    try { c = await api.atlasRestore(); } catch (e) { setLinkErr(errText(e)); }
     finally { setLinking(null); await loadStored(); }
+    // Already linked: open the cluster's data directly instead of asking to connect again.
+    if (c) {
+      const label = c.host.split(".")[0];
+      mongoSources(label).then((s) => { setBase((b) => b ?? s); setView((v) => (v === "connect" ? "ask" : v)); }).catch((e) => setLinkErr(`Connected, but sampling the cluster failed: ${errText(e)}`));
+    }
   }, [loadStored]);
 
   useEffect(() => {

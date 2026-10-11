@@ -38,6 +38,7 @@ Rules:
 - Dates are real dates. For "now" use the "$$NOW" variable, e.g. {"$subtract": ["$$NOW", "$lastActivityAt"]} gives milliseconds; one day is 86400000 ms.
 - Prefer $lookup to show names instead of ids (reps.name, accounts.name). Keep output columns readable and few (≤ 7). Round money and ratios.
 - End with $limit (≤ 50) unless the result is an aggregate.
+- If no collection in the schema can answer the question, reply {"db": null, "collection": null, "pipeline": [], "explain": "what data is missing"}.
 - Apply the team glossary definitions exactly; they override your defaults.`;
 
 const SUMMARIZER = `You are Harry, a sharp sales analyst. Given a question and query results, reply with ONE JSON object:
@@ -110,6 +111,8 @@ export async function ask(
     .filter(Boolean)
     .join("\n\n");
 
+  if (!src.schemas.length) throw new Error("There's no data to query yet: the connected cluster has no collections besides Harry's own.");
+
   let plan = null as Plan | null;
   let rows: Doc[] = [];
   let lastError = "";
@@ -125,11 +128,18 @@ export async function ask(
     model = res.model;
     try {
       plan = reviveDates(extractJson(res.text)) as Plan;
-      done(i, { status: "ok", ms: Math.round(performance.now() - t0), detail: `${plan!.db}.${plan!.collection} · ${plan!.pipeline.length} stages` });
+      if ((plan.db || plan.collection) && (typeof plan.db !== "string" || typeof plan.collection !== "string" || !Array.isArray(plan.pipeline) || !src.schemas.some((c) => c.db === plan!.db && c.name === plan!.collection))) {
+        throw new Error(`Plan must use a db and collection from the schema; got ${JSON.stringify({ db: plan.db, collection: plan.collection })}`);
+      }
+      if (plan.db) done(i, { status: "ok", ms: Math.round(performance.now() - t0), detail: `${plan!.db}.${plan!.collection} · ${plan!.pipeline.length} stages` });
     } catch (e) {
       lastError = String(e);
       done(i, { status: "fail", detail: lastError });
       continue;
+    }
+    if (!plan!.db && !plan!.collection) {
+      done(i, { status: "fail", detail: "No collection fits this question" });
+      throw new Error(plan!.explain || "None of your collections can answer this question.");
     }
     const g = push({ label: "Policy gate", status: "run" });
     try {

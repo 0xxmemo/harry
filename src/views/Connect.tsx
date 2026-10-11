@@ -65,7 +65,7 @@ export default function Connect({ atlasReady, storeReady, linking, linkErr, hubs
             )}
           </Option>
 
-          <Option icon={<MongoLeaf />} title="Atlas cluster" tag={<Pill><Lock className="size-3" /> CRM read-only</Pill>} desc="Ask questions about live data and keep Harry's outbox, runs and playbooks in its own harry database. Your other data is never written.">
+          <Option icon={<MongoLeaf />} title="MongoDB data" tag={<Pill><Lock className="size-3" /> Read-only</Pill>} desc="Ask questions about the data already in your Atlas cluster. Harry only reads it; its own work lives in a separate harry database.">
             {!atlasReady ? (
               <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Sign in to MongoDB in Setup to use this.</div>
             ) : (
