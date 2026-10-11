@@ -1,0 +1,8 @@
+{
+  "appId": "6acc1ad4dfdb1813453a5eab",
+  "deploy": {
+    "environmentId": "6acc1ad7dfdb1813453a5eac",
+    "appAlias": "harry-mv4gavd1b9m",
+    "envAlias": "prod"
+  }
+}
