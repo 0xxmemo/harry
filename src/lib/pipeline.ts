@@ -72,9 +72,9 @@ export function stageForDeal(pipeline: Pipeline, crmStage: string, hasReply: boo
   const s = crmStage.toLowerCase();
   if (/won|lost|closed/.test(s)) return null;
   if (pipeline.id === "saas") {
-    if (/negotiation|proposal/.test(s)) return pipeline.stages.find((x) => x.id === "close")!;
-    if (/demo/.test(s)) return pipeline.stages.find((x) => x.id === "sales_call")!;
-    if (/discovery/.test(s) || hasReply) return pipeline.stages.find((x) => x.id === "call_booked")!;
+    if (/negotiation|proposal|follow-up|contract|sales call done/.test(s)) return pipeline.stages.find((x) => x.id === "close")!;
+    if (/demo|call booked|presentation/.test(s)) return pipeline.stages.find((x) => x.id === "sales_call")!;
+    if (/discovery|replied|qualified/.test(s) || hasReply) return pipeline.stages.find((x) => x.id === "call_booked")!;
     return pipeline.stages[0];
   }
   return hasReply ? pipeline.stages[1] : pipeline.stages[0];

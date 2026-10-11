@@ -229,7 +229,7 @@ function RulesDialog({ settings, onSave }: { settings: Settings; onSave: (p: Par
           <div className="space-y-1.5">
             <Label className="text-xs">Send demo drafts to</Label>
             <Input defaultValue={settings.recipientOverride ?? ""} onBlur={(e) => onSave({ recipientOverride: e.target.value.trim() })} placeholder="teammate@company.com" />
-            <div className="text-xs text-muted-foreground">Demo contacts have placeholder addresses. New drafts go here instead.</div>
+            <div className="text-xs text-muted-foreground">Contacts with placeholder addresses get drafts sent here instead.</div>
           </div>
           <div className="flex flex-wrap gap-1.5 border-t pt-4">
             {[`Max ${settings.perContactPerWeek} per contact / week`, `Max ${settings.perMailboxPerDay} per day`, "No prices or discounts", "Unsubscribes honored", "Never changes deal stages"].map((r) => <Pill key={r}>{r}</Pill>)}
@@ -243,7 +243,7 @@ function RulesDialog({ settings, onSave }: { settings: Settings; onSave: (p: Par
 function checks(item: OutboxItem, settings: Settings | null) {
   const to = item.to.trim().toLowerCase();
   return [
-    { label: "Real address", ok: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) && !to.endsWith("example.com"), fix: "Demo contacts use placeholder addresses. Set “Send demo drafts to” in Send rules, or edit the To field." },
+    { label: "Real address", ok: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) && !to.endsWith("example.com"), fix: "This contact has a placeholder address. Set “Send demo drafts to” in Send rules, or edit the To field." },
     { label: "Allowed recipient", ok: !settings?.demoMode || settings.allowlist.some((a) => a.toLowerCase() === to), fix: "Demo mode is on. Add this address to the allowlist in Send rules." },
     { label: "No prices or discounts", ok: !/(\$\s?\d|\d+\s?% off|\bdiscount|\bfree month|\bpromo code)/i.test(item.body), fix: "Remove the price or discount from the message." },
   ];

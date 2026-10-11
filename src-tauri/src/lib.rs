@@ -30,6 +30,16 @@ pub fn run() {
         .setup(|app| {
             let roots = files::load_roots(app.handle());
             *app.state::<AppState>().roots.lock().unwrap() = roots;
+            // Reconnect the persistent store from the last session.
+            if let Some(uri) = store::saved_uri(app.handle()) {
+                let handle = app.handle().clone();
+                tauri::async_runtime::block_on(async move {
+                    match store::connect(&handle, &uri).await {
+                        Ok(()) => *handle.state::<AppState>().uri.lock().unwrap() = Some(uri),
+                        Err(e) => eprintln!("harry: could not reconnect MongoDB store: {e}"),
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -53,7 +63,6 @@ pub fn run() {
             files::revoke_folder,
             files::scan_folder,
             files::read_source,
-            files::read_picked,
             files::mem_load,
             files::mem_save,
             composio::composio_status,
@@ -65,11 +74,11 @@ pub fn run() {
             composio::outbox_send,
             composio::fetch_replies,
             gate::gate_playbook,
+            store::store_status,
             store::store_list,
             store::store_upsert,
             store::store_reset,
             transcript::parse_transcript,
-            transcript::sample_calls,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Harry");

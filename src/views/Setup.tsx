@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 
 const INFO: Record<string, { label: string; role: string }> = {
   openllm: { label: "OpenLLM", role: "Runs every model call" },
-  atlas: { label: "Atlas CLI", role: "Signs in to MongoDB, creates temporary read-only users" },
+  atlas: { label: "Atlas CLI", role: "Signs in to MongoDB, creates Harry's database user" },
   mongosh: { label: "mongosh", role: "Runs read-only queries on your cluster" },
   composio: { label: "Composio", role: "Your one integration for email, CRM and calendar" },
 };
@@ -62,7 +62,7 @@ function Step({ n, done, title, why, children, optional }: { n: number; done?: b
   );
 }
 
-export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip: () => void }) {
+export default function Setup({ onReady }: { onReady: () => void }) {
   const [tools, setTools] = useState<ToolStatus[] | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [comp, setComp] = useState<Comp | null>(null);
@@ -169,7 +169,7 @@ export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip
           )}
         </Step>
 
-        <Step n={3} done={steps[2]} optional title="Sign in to MongoDB Atlas" why="Only needed to ask questions about a live cluster. The demo CRM and CSV imports work without it.">
+        <Step n={3} done={steps[2]} optional title="Sign in to MongoDB Atlas" why="Only needed to ask questions about a live cluster. A Composio-linked CRM works without it.">
           {auth?.atlas ? (
             <div className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-brand-2"><Check className="size-4" /> {auth.atlas_detail}</span>
@@ -233,8 +233,7 @@ export default function Setup({ onReady, onSkip }: { onReady: () => void; onSkip
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t pt-5">
-          <Button variant="ghost" onClick={onSkip}>Explore the demo CRM first</Button>
+        <div className="flex items-center justify-end border-t pt-5">
           <Button disabled={!ready} onClick={onReady} title={ready ? "" : "Connect OpenLLM first"}>Continue</Button>
         </div>
       </div>

@@ -1,9 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, AudioLines, Check, FileText, Lightbulb, MessageSquareQuote, Plus, Upload, X } from "lucide-react";
+import { ArrowRight, AudioLines, Check, Lightbulb, MessageSquareQuote, Plus, Upload, X } from "lucide-react";
 import { analyzeCall, Call, importCall, matchDeal, suggestDeals } from "../lib/calls";
 import { SourceSet } from "../lib/sources";
 import { store } from "../lib/store";
@@ -17,7 +16,6 @@ type Doc = Record<string, unknown>;
 export default function Calls({ src, onChange }: { src: SourceSet; onChange: () => void }) {
   const [calls, setCalls] = useState<Call[]>([]);
   const [insights, setInsights] = useState<Doc[]>([]);
-  const [samples, setSamples] = useState<string[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [consent, setConsent] = useState(false);
@@ -31,7 +29,6 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
   };
   useEffect(() => {
     load();
-    invoke<string[]>("sample_calls").then(setSamples).catch(() => {});
   }, []);
 
   const ingest = async (paths: string[], skipConsent = false) => {
@@ -93,25 +90,6 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
         <div className="text-xs text-muted-foreground">Meet · Zoom · Teams · Otter · Fireflies · Fathom · Gong</div>
       </button>
 
-      {samples.length > 0 && (
-        <div className="mt-8">
-          <SectionLabel className="mb-2">Or try a sample call (consent recorded)</SectionLabel>
-          <div className="grid grid-cols-2 gap-2">
-            {samples.map((p) => {
-              const name = p.split("/").pop()!;
-              return (
-                <button key={p} disabled={!!busy} onClick={() => ingest([p], true)} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/50">
-                  <FileText className="size-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm capitalize">{name.replace(/\.[^.]+$/, "").replace(/-/g, " ")}</div>
-                    <div className="text-xs text-muted-foreground">.{name.split(".").pop()} export</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 

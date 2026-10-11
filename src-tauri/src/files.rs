@@ -165,16 +165,3 @@ pub fn mem_save(app: AppHandle, memory: Value) -> Result<(), String> {
     std::fs::rename(tmp, dir.join("memory.json")).map_err(|e| e.to_string())
 }
 
-/// Read one file the user just picked in a native dialog. Picking it is the grant; no folder access.
-#[tauri::command]
-pub fn read_picked(path: String) -> Result<String, String> {
-    let p = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if denied(&name) || !(name.ends_with(".csv") || name.ends_with(".tsv")) {
-        return Err("Pick a .csv or .tsv export".into());
-    }
-    if std::fs::metadata(&p).map_err(|e| e.to_string())?.len() > MAX_BYTES {
-        return Err("File is larger than 5 MB".into());
-    }
-    std::fs::read_to_string(&p).map_err(|e| e.to_string())
-}

@@ -1,20 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import { ReactNode, useEffect, useState } from "react";
-import { ArrowRight, Check, FileSpreadsheet, Lock, Sparkles } from "lucide-react";
-import { guessMapping, readCsv, Target, TARGETS, toSources } from "../lib/crmImport";
+import { ArrowRight, Check, Lock, Plug } from "lucide-react";
+import { hubspotSources } from "../lib/hubspot";
 import { SourceSet } from "../lib/sources";
 import { api, AtlasCluster, AtlasProject } from "../lib/api";
 import { Button, Card, cx, ErrorBox, errText, Pill, Spinner } from "../components/ui";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MongoLeaf } from "./Setup";
-
-const LABELS: Record<Target, string> = {
-  deal: "Deal name", company: "Company", contact: "Contact name", email: "Contact email", amount: "Amount", stage: "Stage",
-  owner: "Owner / rep", lastActivity: "Last activity", created: "Created", closed: "Close date", title: "Job title", industry: "Industry",
-};
-const REQUIRED: Target[] = ["company", "email", "stage"];
 
 function Option({ icon, title, tag, desc, children, highlight }: { icon: ReactNode; title: string; tag?: ReactNode; desc: string; children: ReactNode; highlight?: boolean }) {
   return (
@@ -27,8 +19,7 @@ function Option({ icon, title, tag, desc, children, highlight }: { icon: ReactNo
   );
 }
 
-export default function Connect({ atlasReady, onDemo, onConnected, onImported }: { atlasReady: boolean; onDemo: () => void; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
-  const [csv, setCsv] = useState<{ name: string; rows: Record<string, unknown>[]; columns: string[]; map: Partial<Record<Target, string>> } | null>(null);
+export default function Connect({ atlasReady, hubspotLinked, onConnected, onImported }: { atlasReady: boolean; hubspotLinked: boolean; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
   const [projects, setProjects] = useState<AtlasProject[] | null>(null);
   const [clusters, setClusters] = useState<AtlasCluster[] | null>(null);
   const [project, setProject] = useState("");
@@ -55,40 +46,6 @@ export default function Connect({ atlasReady, onDemo, onConnected, onImported }:
     try { await fn(); } catch (e) { setErr(errText(e)); } finally { setBusy(""); }
   };
 
-  if (csv) {
-    const missing = REQUIRED.filter((t) => !csv.map[t]);
-    return (
-      <div className="h-full overflow-y-auto">
-        <div className="mx-auto max-w-3xl space-y-5 px-8 pt-14 pb-12">
-          <div>
-            <button onClick={() => setCsv(null)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight">Match your columns</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{csv.name} · {csv.rows.length} rows. Harry guessed the matches below; fix any that are wrong.</p>
-          </div>
-          <Card className="divide-y">
-            {TARGETS.map((t) => (
-              <div key={t} className="grid grid-cols-[180px_1fr_1fr] items-center gap-4 px-5 py-2.5">
-                <div className="text-sm">{LABELS[t]} {REQUIRED.includes(t) && <span className="text-destructive">*</span>}</div>
-                <Select value={csv.map[t] ?? "__none"} onValueChange={(v) => setCsv({ ...csv, map: { ...csv.map, [t]: v === "__none" ? undefined : v } })}>
-                  <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none">Not in this file</SelectItem>
-                    {csv.columns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <div className="truncate text-xs text-muted-foreground">{csv.map[t] ? `e.g. ${String(csv.rows[0][csv.map[t]!] ?? "—")}` : ""}</div>
-              </div>
-            ))}
-          </Card>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">{missing.length ? `Still needed: ${missing.map((m) => LABELS[m]).join(", ")}` : "Ready to import"}</span>
-            <Button disabled={missing.length > 0} onClick={() => onImported(toSources(csv.rows, csv.map, csv.name))}>Import {csv.rows.length} rows <ArrowRight /></Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center gap-8 px-8 py-12">
@@ -97,24 +54,18 @@ export default function Connect({ atlasReady, onDemo, onConnected, onImported }:
           <p className="mt-2 max-w-2xl text-muted-foreground">Choose where your deals live. Harry reads them, drafts follow-ups for your approval, and never edits or deletes your records.</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <Option highlight icon={<Sparkles />} title="Demo CRM" tag={<Pill tone="brand">start here</Pill>} desc="339 deals, 113 contacts and two recorded calls, deliberately messy. Every feature works with it.">
-            <Button className="w-full" onClick={onDemo}>Open demo CRM <ArrowRight /></Button>
+        <div className="grid grid-cols-2 gap-4">
+          <Option highlight icon={<Plug />} title="HubSpot" tag={<Pill tone="brand">via Composio</Pill>} desc="Pull companies, contacts and deals live through your Composio connection. Read-only.">
+            {!hubspotLinked ? (
+              <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Run <code>composio link hubspot</code> in Setup to use this.</div>
+            ) : (
+              <Button className="w-full" disabled={!!busy} onClick={() => go("hubspot", async () => onImported(await hubspotSources()))}>
+                {busy === "hubspot" ? <Spinner /> : null} Pull from HubSpot <ArrowRight />
+              </Button>
+            )}
           </Option>
 
-          <Option icon={<FileSpreadsheet />} title="Import a CRM export" desc="A CSV from HubSpot, Salesforce, Pipedrive or a spreadsheet. You'll match columns next.">
-            <Button variant="outline" className="w-full" disabled={!!busy} onClick={() => go("csv", async () => {
-              const f = await open({ filters: [{ name: "CSV", extensions: ["csv", "tsv"] }] });
-              if (typeof f !== "string") return;
-              const { rows, columns } = readCsv(await invoke<string>("read_picked", { path: f }));
-              if (!rows.length) throw new Error("No rows found in that file");
-              setCsv({ name: f.split("/").pop()!, rows, columns, map: guessMapping(columns) });
-            })}>
-              {busy === "csv" ? <Spinner /> : null} Choose CSV…
-            </Button>
-          </Option>
-
-          <Option icon={<MongoLeaf />} title="Atlas cluster" tag={<Pill><Lock className="size-3" /> read-only</Pill>} desc="Ask questions about live data. Harry creates a temporary read-only user that Atlas deletes in 24h.">
+          <Option icon={<MongoLeaf />} title="Atlas cluster" tag={<Pill><Lock className="size-3" /> CRM read-only</Pill>} desc="Ask questions about live data and keep Harry's outbox, runs and playbooks in its own harry database. Your other data is never written.">
             {!atlasReady ? (
               <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Sign in to MongoDB in Setup to use this.</div>
             ) : (
@@ -128,7 +79,7 @@ export default function Connect({ atlasReady, onDemo, onConnected, onImported }:
                   <SelectContent>{clusters?.map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
                 </Select>
                 <Button className="w-full" variant="outline" disabled={!cluster || !!busy} onClick={() => go("atlas", async () => { await api.atlasConnect(project, cluster); await onConnected(cluster); })}>
-                  {busy === "atlas" ? <><Spinner /> Creating read-only user…</> : <><Check /> Connect</>}
+                  {busy === "atlas" ? <><Spinner /> Creating database user…</> : <><Check /> Connect</>}
                 </Button>
               </div>
             )}

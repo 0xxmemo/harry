@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
 import { knowledgeCount, loadMemory, Memory } from "./lib/memory";
-import { demoSources, loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
+import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
 import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp, Workflow } from "lucide-react";
 import { Button, cx, Dot, EmptyState, errText, SectionLabel } from "./components/ui";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -34,6 +34,8 @@ export default function App() {
   const [pipelineId, setPipelineId] = useState("saas");
   const [composio, setComposio] = useState<{ logged_in: boolean; linked: string[] } | null>(null);
   const [resumable, setResumable] = useState(false);
+  const [storeHost, setStoreHost] = useState<string | null>(null);
+  const refreshStore = () => api.storeStatus().then((s) => setStoreHost(s.host)).catch(() => {});
 
   useEffect(() => {
     if (!isTauri()) {
@@ -45,6 +47,7 @@ export default function App() {
     unfinishedRun().then((r) => setResumable(!!r));
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
     api.listRoots().then(setRoots);
+    refreshStore();
     api.authStatus().then((a) => {
       setAuth(a);
       if (a.openllm) setView("connect");
@@ -189,11 +192,13 @@ export default function App() {
               ["OpenLLM", auth?.openllm, !auth],
               ["MongoDB Atlas", auth?.atlas, !auth],
               ["Composio", composio?.logged_in, !composio],
+              ["Mongo store", !!storeHost, false],
             ].map(([label, ok, warn]) => (
               <div key={String(label)} className="flex items-center gap-2 text-muted-foreground">
                 <Dot ok={!!ok} warn={!!warn} />
                 <span className="flex-1">{label as string}</span>
                 {label === "Composio" && composio?.linked.length ? <span className="truncate text-[11px]">{composio.linked.length} linked</span> : null}
+                {label === "Mongo store" ? <span className="truncate text-[11px]">{storeHost ? "persistent" : "local only"}</span> : null}
               </div>
             ))}
           </button>
@@ -208,21 +213,12 @@ export default function App() {
               refreshAuth();
               setView("connect");
             }}
-            onSkip={() => {
-              refreshAuth();
-              setBase(demoSources());
-              setView("pipeline");
-            }}
           />
         )}
         {view === "connect" && (
           <Connect
             atlasReady={!!auth?.atlas}
-            onDemo={() => {
-              api.mongoDisconnect();
-              setBase(demoSources());
-              setView("pipeline");
-            }}
+            hubspotLinked={!!composio?.linked.some((l) => /hubspot/i.test(l))}
             onImported={(s) => {
               api.mongoDisconnect();
               setBase(s);
@@ -230,6 +226,7 @@ export default function App() {
             }}
             onConnected={async (label) => {
               try {
+                refreshStore();
                 setBase(await mongoSources(label));
                 setView("ask");
               } catch (e) {
@@ -240,8 +237,8 @@ export default function App() {
         )}
         {src && view === "ask" && <Ask key={src.label} src={src} memory={memory} onMemory={() => bump((n) => n + 1)} />}
         {src && src.kind === "mongo" && (view === "pipeline" || view === "calls") && (
-          <EmptyState icon={<Database />} title="Live clusters are read-only" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
-            Ask Harry works on live clusters. Load the demo CRM or import a CSV export to run the follow-up agent.
+          <EmptyState icon={<Database />} title="Cluster data is read-only" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
+            Ask Harry works on live clusters. Pull your CRM from HubSpot to run the follow-up agent.
           </EmptyState>
         )}
         {src && src.kind !== "mongo" && view === "pipeline" && <Pipeline key={pipeline.id} src={src} pipeline={pipeline} onChange={() => bump((n) => n + 1)} />}
