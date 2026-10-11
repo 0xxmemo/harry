@@ -69,6 +69,7 @@ pub fn run() {
             store::store_upsert,
             store::store_reset,
             transcript::parse_transcript,
+            transcript::sample_calls,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Harry");

@@ -144,6 +144,17 @@ fn parse_bytes(name: &str, bytes: &[u8]) -> Result<(String, Vec<Turn>), String> 
     Ok((ext, turns))
 }
 
+/// Bundled sample transcripts for the demo.
+#[tauri::command]
+pub fn sample_calls() -> Vec<String> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../demo-crm/calls");
+    let mut v: Vec<String> = std::fs::read_dir(&dir)
+        .map(|r| r.flatten().filter_map(|e| std::fs::canonicalize(e.path()).ok()).map(|p| p.to_string_lossy().into()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
 /// Parse a transcript from a granted folder, or one the user dropped onto the window.
 /// Drag-drop is an explicit grant for that single file.
 #[tauri::command]

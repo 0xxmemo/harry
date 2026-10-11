@@ -1,23 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { ArrowRight, Check, FileSpreadsheet, Lock, Sparkles } from "lucide-react";
 import { guessMapping, readCsv, Target, TARGETS, toSources } from "../lib/crmImport";
 import { SourceSet } from "../lib/sources";
 import { api, AtlasCluster, AtlasProject } from "../lib/api";
-import { Button, Card, ErrorBox, errText, Spinner } from "../components/ui";
+import { Button, Card, cx, ErrorBox, errText, Pill, Spinner } from "../components/ui";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MongoLeaf } from "./Setup";
 
-export default function Connect({
-  atlasReady,
-  onDemo,
-  onConnected,
-  onImported,
-}: {
-  atlasReady: boolean;
-  onDemo: () => void;
-  onConnected: (label: string) => Promise<void>;
-  onImported: (s: SourceSet) => void;
-}) {
+const LABELS: Record<Target, string> = {
+  deal: "Deal name", company: "Company", contact: "Contact name", email: "Contact email", amount: "Amount", stage: "Stage",
+  owner: "Owner / rep", lastActivity: "Last activity", created: "Created", closed: "Close date", title: "Job title", industry: "Industry",
+};
+const REQUIRED: Target[] = ["company", "email", "stage"];
+
+function Option({ icon, title, tag, desc, children, highlight }: { icon: ReactNode; title: string; tag?: ReactNode; desc: string; children: ReactNode; highlight?: boolean }) {
+  return (
+    <Card className={cx("rise flex flex-col p-6", highlight && "border-primary/40 bg-gradient-to-b from-primary/10 to-transparent")}>
+      <div className="flex size-9 items-center justify-center rounded-lg border bg-background/60 text-muted-foreground [&_svg]:size-4">{icon}</div>
+      <div className="mt-4 flex items-center gap-2 font-medium">{title} {tag}</div>
+      <p className="mt-1 text-sm text-muted-foreground">{desc}</p>
+      <div className="mt-5 flex flex-1 flex-col justify-end">{children}</div>
+    </Card>
+  );
+}
+
+export default function Connect({ atlasReady, onDemo, onConnected, onImported }: { atlasReady: boolean; onDemo: () => void; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
   const [csv, setCsv] = useState<{ name: string; rows: Record<string, unknown>[]; columns: string[]; map: Partial<Record<Target, string>> } | null>(null);
   const [projects, setProjects] = useState<AtlasProject[] | null>(null);
   const [clusters, setClusters] = useState<AtlasCluster[] | null>(null);
@@ -26,171 +36,115 @@ export default function Connect({
   const [uri, setUri] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
-  const [note, setNote] = useState("");
 
   useEffect(() => {
     if (!atlasReady) return;
-    api.atlasProjects().then((p) => {
-      setProjects(p);
-      if (p.length === 1) setProject(p[0].id);
-    }).catch((e) => setErr(errText(e)));
+    api.atlasProjects().then((p) => { setProjects(p); if (p.length === 1) setProject(p[0].id); }).catch((e) => setErr(errText(e)));
   }, [atlasReady]);
 
   useEffect(() => {
     if (!project) return;
     setClusters(null);
     setCluster("");
-    api.atlasClusters(project).then((c) => {
-      setClusters(c);
-      if (c.length === 1) setCluster(c[0].name);
-    }).catch((e) => setErr(errText(e)));
+    api.atlasClusters(project).then((c) => { setClusters(c); if (c.length === 1) setCluster(c[0].name); }).catch((e) => setErr(errText(e)));
   }, [project]);
 
   const go = async (id: string, fn: () => Promise<void>) => {
     setBusy(id);
     setErr("");
-    try {
-      await fn();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy("");
-    }
+    try { await fn(); } catch (e) { setErr(errText(e)); } finally { setBusy(""); }
   };
 
-  const select = "w-full rounded-lg border border-line bg-black/30 px-3 py-2 text-sm outline-none focus:border-brand";
+  if (csv) {
+    const missing = REQUIRED.filter((t) => !csv.map[t]);
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-3xl space-y-5 px-8 pt-14 pb-12">
+          <div>
+            <button onClick={() => setCsv(null)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">Match your columns</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{csv.name} · {csv.rows.length} rows. Harry guessed the matches below; fix any that are wrong.</p>
+          </div>
+          <Card className="divide-y">
+            {TARGETS.map((t) => (
+              <div key={t} className="grid grid-cols-[180px_1fr_1fr] items-center gap-4 px-5 py-2.5">
+                <div className="text-sm">{LABELS[t]} {REQUIRED.includes(t) && <span className="text-destructive">*</span>}</div>
+                <Select value={csv.map[t] ?? "__none"} onValueChange={(v) => setCsv({ ...csv, map: { ...csv.map, [t]: v === "__none" ? undefined : v } })}>
+                  <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Not in this file</SelectItem>
+                    {csv.columns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="truncate text-xs text-muted-foreground">{csv.map[t] ? `e.g. ${String(csv.rows[0][csv.map[t]!] ?? "—")}` : ""}</div>
+              </div>
+            ))}
+          </Card>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">{missing.length ? `Still needed: ${missing.map((m) => LABELS[m]).join(", ")}` : "Ready to import"}</span>
+            <Button disabled={missing.length > 0} onClick={() => onImported(toSources(csv.rows, csv.map, csv.name))}>Import {csv.rows.length} rows <ArrowRight /></Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto flex h-full max-w-4xl flex-col justify-center gap-6 px-8 pb-10">
-      <div className="rise">
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Meet Harry, <span className="text-brand">your best sales rep.</span>
-        </h1>
-        <p className="mt-2 text-mute">Connect your CRM. Harry reads it, drafts follow-ups for your approval, and never edits or deletes your records.</p>
-      </div>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center gap-8 px-8 py-12">
+        <div className="rise">
+          <h1 className="text-3xl font-semibold tracking-tight">Meet Harry, <span className="text-brand-2">your best sales rep.</span></h1>
+          <p className="mt-2 max-w-2xl text-muted-foreground">Choose where your deals live. Harry reads them, drafts follow-ups for your approval, and never edits or deletes your records.</p>
+        </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <Card className="rise p-6">
-          <div className="flex items-center gap-2 font-medium">
-            <MongoLeaf className="h-5 w-5 text-brand" /> Your Atlas cluster
-          </div>
-          {!atlasReady ? (
-            <p className="mt-3 text-sm text-mute">Sign in to MongoDB in Setup first.</p>
-          ) : (
-            <div className="mt-4 space-y-3">
-              <select className={select} value={project} onChange={(e) => setProject(e.target.value)}>
-                <option value="">{projects ? "Choose a project" : "Loading projects…"}</option>
-                {projects?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <select className={select} value={cluster} onChange={(e) => setCluster(e.target.value)} disabled={!clusters}>
-                <option value="">{!project ? "—" : clusters ? (clusters.length ? "Choose a cluster" : "No clusters in this project") : "Loading clusters…"}</option>
-                {clusters?.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name} {c.stateName && c.stateName !== "IDLE" ? `(${c.stateName})` : ""}
-                  </option>
-                ))}
-              </select>
-              <Button
-                className="w-full"
-                disabled={!cluster || !!busy}
-                onClick={() =>
-                  go("atlas", async () => {
-                    const c = await api.atlasConnect(project, cluster);
-                    setNote(`Created read-only user ${c.username}, auto-deleted ${c.expires.slice(0, 16).replace("T", " ")} UTC`);
-                    await onConnected(cluster);
-                  })
-                }
-              >
-                {busy === "atlas" ? <Spinner /> : null} Connect read-only
-              </Button>
-              <p className="text-xs text-mute">Harry creates a temporary read-only database user and access-list entry. Atlas deletes both in 24h.</p>
-            </div>
-          )}
-        </Card>
+        <div className="grid grid-cols-3 gap-4">
+          <Option highlight icon={<Sparkles />} title="Demo CRM" tag={<Pill tone="brand">start here</Pill>} desc="339 deals, 113 contacts and two recorded calls, deliberately messy. Every feature works with it.">
+            <Button className="w-full" onClick={onDemo}>Open demo CRM <ArrowRight /></Button>
+          </Option>
 
-        <div className="flex flex-col gap-4">
-          <Card className="rise flex-1 border-brand/40 bg-gradient-to-br from-brand/10 to-transparent p-6">
-            <div className="font-medium">Try the demo CRM</div>
-            <p className="mt-1 text-sm text-mute">339 deals, 113 contacts, 8 reps, sample call transcripts. Messy on purpose.</p>
-            <Button className="mt-4 w-full" onClick={onDemo}>
-              Open demo CRM
+          <Option icon={<FileSpreadsheet />} title="Import a CRM export" desc="A CSV from HubSpot, Salesforce, Pipedrive or a spreadsheet. You'll match columns next.">
+            <Button variant="outline" className="w-full" disabled={!!busy} onClick={() => go("csv", async () => {
+              const f = await open({ filters: [{ name: "CSV", extensions: ["csv", "tsv"] }] });
+              if (typeof f !== "string") return;
+              const { rows, columns } = readCsv(await invoke<string>("read_picked", { path: f }));
+              if (!rows.length) throw new Error("No rows found in that file");
+              setCsv({ name: f.split("/").pop()!, rows, columns, map: guessMapping(columns) });
+            })}>
+              {busy === "csv" ? <Spinner /> : null} Choose CSV…
             </Button>
-          </Card>
-          <Card className="rise p-6">
-            <div className="text-sm font-medium">Import a CRM export (CSV)</div>
-            <p className="mt-1 text-xs text-mute">HubSpot, Salesforce, Pipedrive, or any spreadsheet.</p>
-            {!csv ? (
-              <Button
-                variant="outline"
-                className="mt-3 w-full"
-                onClick={() =>
-                  go("csv", async () => {
-                    const f = await open({ filters: [{ name: "CSV", extensions: ["csv", "tsv"] }] });
-                    if (typeof f !== "string") return;
-                    const { rows, columns } = readCsv(await invoke<string>("read_picked", { path: f }));
-                    if (!rows.length) throw new Error("No rows found in that file");
-                    setCsv({ name: f.split("/").pop()!, rows, columns, map: guessMapping(columns) });
-                  })
-                }
-              >
-                Choose CSV…
-              </Button>
+          </Option>
+
+          <Option icon={<MongoLeaf />} title="Atlas cluster" tag={<Pill><Lock className="size-3" /> read-only</Pill>} desc="Ask questions about live data. Harry creates a temporary read-only user that Atlas deletes in 24h.">
+            {!atlasReady ? (
+              <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Sign in to MongoDB in Setup to use this.</div>
             ) : (
-              <div className="mt-3 space-y-1.5">
-                <div className="text-xs text-mute">{csv.name} · {csv.rows.length} rows · map your columns</div>
-                <div className="grid max-h-48 grid-cols-2 gap-1.5 overflow-y-auto">
-                  {TARGETS.map((t) => (
-                    <label key={t} className="flex items-center gap-1.5 text-xs">
-                      <span className="w-20 text-mute">{t}</span>
-                      <select
-                        value={csv.map[t] ?? ""}
-                        onChange={(e) => setCsv({ ...csv, map: { ...csv.map, [t]: e.target.value || undefined } })}
-                        className="min-w-0 flex-1 rounded border border-line bg-black/30 px-1 py-0.5"
-                      >
-                        <option value="">—</option>
-                        {csv.columns.map((c) => <option key={c}>{c}</option>)}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-                <Button className="w-full" disabled={!csv.map.company && !csv.map.deal} onClick={() => onImported(toSources(csv.rows, csv.map, csv.name))}>
-                  Import {csv.rows.length} rows
+              <div className="space-y-2">
+                <Select value={project} onValueChange={setProject}>
+                  <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={projects ? "Project" : "Loading projects…"} /></SelectTrigger>
+                  <SelectContent>{projects?.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={cluster} onValueChange={setCluster} disabled={!clusters?.length}>
+                  <SelectTrigger size="sm" className="w-full"><SelectValue placeholder={!project ? "Cluster" : clusters ? (clusters.length ? "Cluster" : "No clusters") : "Loading…"} /></SelectTrigger>
+                  <SelectContent>{clusters?.map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
+                </Select>
+                <Button className="w-full" variant="outline" disabled={!cluster || !!busy} onClick={() => go("atlas", async () => { await api.atlasConnect(project, cluster); await onConnected(cluster); })}>
+                  {busy === "atlas" ? <><Spinner /> Creating read-only user…</> : <><Check /> Connect</>}
                 </Button>
               </div>
             )}
-          </Card>
-          <Card className="rise p-6">
-            <div className="text-sm font-medium">Or paste a connection string</div>
-            <div className="mt-3 flex gap-2">
-              <input
-                type="password"
-                value={uri}
-                onChange={(e) => setUri(e.target.value)}
-                placeholder="mongodb+srv://…"
-                className="flex-1 rounded-lg border border-line bg-black/30 px-3 py-2 font-mono text-xs outline-none focus:border-brand"
-              />
-              <Button
-                variant="outline"
-                disabled={!uri || !!busy}
-                onClick={() =>
-                  go("uri", async () => {
-                    await api.mongoSetUri(uri);
-                    await onConnected(uri.replace(/^mongodb(\+srv)?:\/\/([^@]*@)?/, "").split(/[/?]/)[0]);
-                  })
-                }
-              >
-                {busy === "uri" ? <Spinner /> : null} Connect
-              </Button>
-            </div>
-          </Card>
+          </Option>
         </div>
+
+        <details className="rise group text-sm">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Have a connection string instead?</summary>
+          <form className="mt-3 flex max-w-xl gap-2" onSubmit={(e) => { e.preventDefault(); go("uri", async () => { await api.mongoSetUri(uri); await onConnected(uri.replace(/^mongodb(\+srv)?:\/\/([^@]*@)?/, "").split(/[/?]/)[0]); }); }}>
+            <Input type="password" value={uri} onChange={(e) => setUri(e.target.value)} placeholder="mongodb+srv://…" className="font-mono text-xs" />
+            <Button type="submit" variant="outline" disabled={!uri || !!busy}>{busy === "uri" ? <Spinner /> : "Connect"}</Button>
+          </form>
+        </details>
+
+        <ErrorBox>{err}</ErrorBox>
       </div>
-      {note && <div className="text-sm text-brand-2">{note}</div>}
-      <ErrorBox>{err}</ErrorBox>
     </div>
   );
 }

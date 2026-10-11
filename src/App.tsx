@@ -19,7 +19,7 @@ import { unfinishedRun } from "./lib/followup";
 import { linkedToolkits } from "./views/Setup";
 import BrainView from "./views/Brain";
 
-type View = "setup" | "connect" | "pipeline" | "calls" | "improve" | "ask" | "brain";
+import type { View } from "./lib/nav";
 
 export default function App() {
   const [view, setView] = useState<View>("setup");
@@ -51,6 +51,12 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    const h = (e: Event) => setView((e as CustomEvent<View>).detail);
+    window.addEventListener("harry-nav", h);
+    return () => window.removeEventListener("harry-nav", h);
+  }, []);
+
   // Re-merge granted folder files into whatever source is active.
   useEffect(() => {
     if (!base) return;
@@ -71,6 +77,14 @@ export default function App() {
     api.authStatus().then(setAuth);
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
   }, []);
+  useEffect(() => {
+    window.addEventListener("harry-status", refreshAuth);
+    window.addEventListener("focus", refreshAuth);
+    return () => {
+      window.removeEventListener("harry-status", refreshAuth);
+      window.removeEventListener("focus", refreshAuth);
+    };
+  }, [refreshAuth]);
   const pipeline = PIPELINES[pipelineId];
 
   if (boot) return <div className="flex h-full items-center justify-center text-muted-foreground">{boot}</div>;
@@ -88,8 +102,8 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
     <div className="flex h-full bg-background">
-      <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar">
-        <div className="drag h-11" />
+      <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
+        <div data-tauri-drag-region className="h-11 shrink-0" />
         <div className="flex items-center gap-2.5 px-5 pb-5">
           <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_24px_-4px] shadow-primary/60">
             <span className="text-sm font-bold">H</span>
@@ -186,8 +200,8 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="relative flex-1 overflow-hidden">
-        <div className="drag absolute inset-x-0 top-0 z-10 h-6" />
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1">
+        
         {view === "setup" && (
           <Setup
             onReady={() => {
