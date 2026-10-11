@@ -157,7 +157,7 @@ function TurnView({ turn, onCorrect, onFollow }: { turn: Turn; onCorrect: (t: st
       <div className="grid grid-cols-[1fr_260px] gap-4">
         <div className="space-y-3">
           {!a && !turn.error && (
-            <Card className="flex items-center gap-3 p-4 text-sm text-muted-foreground">
+            <Card className="flex-row items-center gap-3 p-4 text-sm text-muted-foreground">
               <Spinner className="text-brand" /> {turn.steps.at(-1)?.label ?? "Thinking"}…
             </Card>
           )}

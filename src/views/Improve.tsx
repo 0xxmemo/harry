@@ -75,13 +75,13 @@ export default function Improve({ pipeline, onChange }: { pipeline: Pipeline; on
         </div>
 
         {insights.length > 0 && !busy && (
-          <Card className="flex items-center gap-4 border-amber-400/30 bg-amber-400/5 p-4">
+          <Card className="flex-row items-center gap-4 border-amber-400/30 bg-amber-400/5 p-4">
             <Lightbulb className="size-5 shrink-0 text-amber-300" />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">A rule from a sales call is ready to test</div>
-              <div className="truncate text-xs text-muted-foreground">{String(insights[0].rule)}</div>
+              <div className="mt-0.5 text-xs leading-relaxed text-pretty text-muted-foreground">{String(insights[0].rule)}</div>
             </div>
-            <Button onClick={() => start(insights.map((i) => String(i.rule)), insights.map((i) => String(i._id)))}>Test this rule</Button>
+            <Button className="shrink-0" onClick={() => start(insights.map((i) => String(i.rule)), insights.map((i) => String(i._id)))}>Test this rule</Button>
           </Card>
         )}
 
