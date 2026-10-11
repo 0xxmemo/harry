@@ -1,11 +1,12 @@
-// Data sources Harry can query: a CRM pulled through Composio, a live cluster (via mongosh), and
-// tabular files from granted folders. Local sources run pipelines with mingo after the same
-// Rust policy gate that guards live clusters.
+// One workspace: CRM records synced from Composio (mirrored into Harry's crm_* collections), Harry's
+// knowledge base on Atlas (queried live via mongosh), and tabular files from granted folders.
+// Local rows run pipelines with mingo after the same Rust policy gate that guards the cluster.
 
 import { aggregate } from "mingo";
 import { api, FileEntry } from "./api";
 import { parseDelimited } from "./csv";
 import { CollectionSchema, inferFields } from "./schema";
+import { store, CrmColl } from "./store";
 
 type Doc = Record<string, unknown>;
 
@@ -13,7 +14,6 @@ export type Doc_ = Doc;
 export type Note = { origin: string; text: string };
 
 export type SourceSet = {
-  kind: "crm" | "mongo";
   label: string;
   schemas: CollectionSchema[];
   local: Map<string, Doc[]>; // key "db.collection"
@@ -24,12 +24,27 @@ const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/;
 const reviveDates = (rows: Doc[]) =>
   rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" && ISO.test(v) ? new Date(v) : v])));
 
-export async function mongoSources(label: string): Promise<SourceSet> {
-  const dbs = await api.mongoSample();
-  const schemas: CollectionSchema[] = dbs.flatMap((d) =>
-    d.collections.map((c) => ({ db: d.name, name: c.name, count: c.count, fields: inferFields(c.samples), source: "mongo" as const })),
-  );
-  return { kind: "mongo", label, schemas, local: new Map(), notes: [] };
+const CRM = ["accounts", "contacts", "reps", "deals", "activities"] as const;
+// Relaxed Extended JSON from the store encodes dates as { $date: "..." }.
+const reviveExt = (v: unknown): unknown =>
+  v && typeof v === "object" && !Array.isArray(v) && "$date" in (v as object) ? new Date((v as { $date: string }).$date) : v;
+
+/** Build the workspace from what's stored: synced CRM records plus the knowledge base on the cluster. */
+export async function workspaceSources(label: string): Promise<SourceSet> {
+  const schemas: CollectionSchema[] = [];
+  const local = new Map<string, Doc[]>();
+  for (const name of CRM) {
+    const docs = (await store.list<Doc>(`crm_${name}` as CrmColl)).map((d) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, reviveExt(v)])));
+    local.set(`crm.${name}`, docs);
+    schemas.push({ db: "crm", name, count: docs.length, fields: inferFields(docs.slice(0, 60)), source: "crm" });
+  }
+  const dbs = await api.mongoSample().catch(() => []);
+  for (const d of dbs)
+    for (const c of d.collections) {
+      if (c.name.startsWith("crm_")) continue; // already exposed above as crm.*
+      schemas.push({ db: d.name, name: c.name, count: c.count, fields: inferFields(c.samples), source: "mongo" });
+    }
+  return { label, schemas, local, notes: [] };
 }
 
 const slug = (s: string) => s.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "").toLowerCase();
@@ -91,7 +106,6 @@ export async function runPipeline(src: SourceSet, db: string, collection: string
     });
     return res as Doc[];
   }
-  if (src.kind !== "mongo") throw new Error(`Unknown collection ${key}`);
   return api.mongoAggregate(db, collection, pipeline);
 }
 

@@ -11,7 +11,9 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::RwLock;
 
 pub const COLLECTIONS: &[&str] = &[
-    "settings", "outbox", "interactions", "runs", "calls", "insights", "playbooks", "evals", "llm_cache", "optouts", "traces", "memory", "grants",
+    "settings", "outbox", "interactions", "runs", "calls", "insights", "playbooks", "evals", "llm_cache", "optouts", "traces", "memory", "grants", "sync",
+    // CRM records mirrored from Composio, keyed by the provider's id so re-syncs never duplicate.
+    "crm_accounts", "crm_contacts", "crm_reps", "crm_deals", "crm_activities",
 ];
 const DB: &str = "harry";
 
@@ -119,6 +121,32 @@ pub async fn store_reset(app: AppHandle, colls: Vec<String>) -> Result<(), Strin
         db.collection::<Document>(&c).delete_many(doc! {}).await.map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Mirror a provider's record set into a `crm_*` collection: replace each record by `_id` and drop
+/// records the provider no longer has, so the collection always equals the latest sync.
+#[tauri::command]
+pub async fn store_mirror(app: AppHandle, coll: String, docs: Vec<Value>) -> Result<usize, String> {
+    check(&coll)?;
+    if !coll.starts_with("crm_") {
+        return Err("only crm_* collections can be mirrored".into());
+    }
+    let c = database(&app).await?.collection::<Document>(&coll);
+    let docs = docs.iter().map(to_doc).collect::<Result<Vec<_>, _>>()?;
+    let ids = docs.iter().map(|d| d.get_str("_id").map(str::to_string).map_err(|_| "document needs a string _id".to_string())).collect::<Result<Vec<_>, _>>()?;
+    let writes: Vec<_> = docs
+        .into_iter()
+        .zip(ids.clone())
+        .map(|(d, id)| {
+            let c = c.clone();
+            tokio::spawn(async move { c.replace_one(doc! { "_id": id }, d).upsert(true).await.map(|_| ()).map_err(|e| e.to_string()) })
+        })
+        .collect();
+    for w in writes {
+        w.await.map_err(|e| e.to_string())??;
+    }
+    c.delete_many(doc! { "_id": { "$nin": &ids } }).await.map_err(|e| e.to_string())?;
+    Ok(ids.len())
 }
 
 pub async fn settings(app: &AppHandle) -> Result<Value, String> {

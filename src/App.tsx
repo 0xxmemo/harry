@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
 import { emptyMemory, knowledgeCount, loadMemory, Memory } from "./lib/memory";
-import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
+import { loadFiles, mergeFiles, workspaceSources, SourceSet } from "./lib/sources";
 import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp } from "lucide-react";
-import { Button, cx, Dot, EmptyState, errText, SectionLabel } from "./components/ui";
+import { cx, Dot, errText, SectionLabel } from "./components/ui";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import Setup from "./views/Setup";
@@ -15,6 +15,7 @@ import Improve from "./views/Improve";
 import { PIPELINE as pipeline } from "./lib/pipeline";
 import { unfinishedRun } from "./lib/followup";
 import { linkedToolkits } from "./views/Setup";
+import { syncHubspot } from "./lib/hubspot";
 import BrainView from "./views/Brain";
 
 import type { View } from "./lib/nav";
@@ -39,6 +40,19 @@ export default function App() {
   // Until the saved link is checked, don't flash Setup/Connect at users who are already connected.
   const [restoring, setRestoring] = useState(true);
   const linked = useRef(false);
+  const label = useRef("Harry");
+  const [syncing, setSyncing] = useState(false);
+  const hubspotLinked = !!composio?.linked.some((l) => /hubspot/i.test(l));
+  // Re-read the workspace (synced CRM + knowledge base) from MongoDB.
+  const reload = useCallback(async () => {
+    try { setBase(await workspaceSources(label.current)); } catch (e) { setLinkErr(errText(e)); }
+  }, []);
+  // Composio sync: pulls only when HubSpot has records newer than the stored cursor, upserts by id.
+  const sync = useCallback(async (force = false) => {
+    setSyncing(true);
+    try { if (await syncHubspot(force)) await reload(); } catch (e) { setLinkErr(`HubSpot sync failed: ${errText(e)}`); }
+    finally { setSyncing(false); }
+  }, [reload]);
   // Everything Harry keeps lives in MongoDB, so state loads only once the store is connected.
   const loadStored = useCallback(async () => {
     const s = await api.storeStatus().catch(() => null);
@@ -58,11 +72,11 @@ export default function App() {
     if (c) {
       linked.current = true;
       setView((v) => (v === "setup" || v === "connect" ? "ask" : v));
-      const label = c.host.split(".")[0];
-      await mongoSources(label).then((s) => setBase((b) => b ?? s)).catch((e) => setLinkErr(`Connected, but sampling Harry's database failed: ${errText(e)}`));
+      label.current = c.host.split(".")[0];
+      await reload();
     }
     setRestoring(false);
-  }, [loadStored]);
+  }, [loadStored, reload]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -70,12 +84,20 @@ export default function App() {
       return;
     }
     restore();
-    api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
+    api.composioStatus().then((c) => {
+      const tk = linkedToolkits(c.connections);
+      setComposio({ logged_in: c.logged_in, linked: tk });
+    }).catch(() => {});
     api.authStatus().then((a) => {
       setAuth(a);
       if (a.openllm && !linked.current) setView((v) => (v === "setup" ? "connect" : v));
     });
   }, []);
+
+  // Once the store is linked and HubSpot is connected, sync in the background.
+  useEffect(() => {
+    if (storeHost && hubspotLinked) sync();
+  }, [storeHost, hubspotLinked, sync]);
 
   useEffect(() => {
     const h = (e: Event) => setView((e as CustomEvent<View>).detail);
@@ -163,7 +185,7 @@ export default function App() {
         </nav>
 
         <div className="mt-5 px-3">
-          <SectionLabel className="px-2.5 pb-1.5">Data source</SectionLabel>
+          <SectionLabel className="px-2.5 pb-1.5">Data</SectionLabel>
           <button
             onClick={() => setView("connect")}
             className={cx("flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition-colors", view === "connect" ? "border-primary/50 bg-primary/5" : "bg-background/40 hover:border-primary/40")}
@@ -171,7 +193,7 @@ export default function App() {
             <Database className="size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm">{src ? src.label : "Not connected"}</div>
-              {src && <div className="text-xs text-muted-foreground">{src.schemas.length} collections{files.length ? ` · ${files.length} files` : ""}</div>}
+              {src && <div className="text-xs text-muted-foreground">{syncing ? "Syncing HubSpot…" : `${(src.local.get("crm.deals") ?? []).length} deals · ${src.schemas.filter((x) => x.source === "mongo").length} KB collections${files.length ? ` · ${files.length} files` : ""}`}</div>}
             </div>
             <ChevronRight className="size-3.5 text-muted-foreground" />
           </button>
@@ -231,23 +253,19 @@ export default function App() {
             storeReady={!!storeHost}
             linking={linking}
             linkErr={linkErr}
-            hubspotLinked={!!composio?.linked.some((l) => /hubspot/i.test(l))}
-            onImported={(s) => {
-              api.mongoDisconnect();
-              setBase(s);
-              setView("pipeline");
-            }}
+            hubspotLinked={hubspotLinked}
+            syncing={syncing}
+            crm={src?.schemas.filter((x) => x.source === "crm") ?? []}
+            onSync={() => sync(true)}
             onConnect={async (project, cluster) => {
               setLinking(`Connecting to ${cluster}…`);
               setLinkErr("");
               try {
                 await api.atlasConnect(project, cluster);
                 await loadStored();
-                try {
-                  setBase(await mongoSources(cluster));
-                } catch (e) {
-                  throw new Error(`Connected, but sampling the cluster failed: ${errText(e)}`);
-                }
+                label.current = cluster;
+                await reload();
+                if (hubspotLinked) await sync();
                 setView("ask");
               } catch (e) {
                 setLinkErr(errText(e));
@@ -258,13 +276,8 @@ export default function App() {
           />
         )}
         {src && view === "ask" && <Ask key={src.label} src={src} memory={memory} onMemory={() => bump((n) => n + 1)} />}
-        {src && src.kind === "mongo" && (view === "pipeline" || view === "calls") && (
-          <EmptyState icon={<Database />} title="Needs CRM data" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
-            Ask Harry works on live clusters. Pull your CRM from HubSpot to run the follow-up agent.
-          </EmptyState>
-        )}
-        {src && src.kind !== "mongo" && view === "pipeline" && <Pipeline key={pipeline.id} src={src} pipeline={pipeline} onChange={() => bump((n) => n + 1)} />}
-        {src && src.kind !== "mongo" && view === "calls" && <Calls src={src} onChange={() => bump((n) => n + 1)} />}
+        {src && view === "pipeline" && <Pipeline key={pipeline.id} src={src} pipeline={pipeline} onChange={() => bump((n) => n + 1)} />}
+        {src && view === "calls" && <Calls src={src} onChange={() => bump((n) => n + 1)} />}
         {view === "improve" && <Improve key={pipeline.id} pipeline={pipeline} onChange={() => bump((n) => n + 1)} />}
         {src && view === "brain" && (
           <BrainView

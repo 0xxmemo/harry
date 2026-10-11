@@ -150,7 +150,7 @@ export async function ask(
       done(g, { status: "fail", detail: lastError });
       continue;
     }
-    const r = push({ label: src.kind === "mongo" ? "Running on Atlas (mongosh)" : "Running query", status: "run" });
+    const r = push({ label: src.local.has(`${plan!.db}.${plan!.collection}`) ? "Running query" : "Running on Atlas (mongosh)", status: "run" });
     const t1 = performance.now();
     try {
       rows = await runPipeline(src, plan!.db, plan!.collection, plan!.pipeline);

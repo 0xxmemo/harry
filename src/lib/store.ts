@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Coll = "settings" | "outbox" | "interactions" | "runs" | "calls" | "insights" | "playbooks" | "evals" | "llm_cache" | "optouts" | "traces";
+export type Coll = "settings" | "outbox" | "interactions" | "runs" | "calls" | "insights" | "playbooks" | "evals" | "llm_cache" | "optouts" | "traces" | "sync" | CrmColl;
+export type CrmColl = "crm_accounts" | "crm_contacts" | "crm_reps" | "crm_deals" | "crm_activities";
 
 export const store = {
   list: <T = Record<string, unknown>>(coll: Coll) => invoke<T[]>("store_list", { coll }),
   upsert: <T = Record<string, unknown>>(coll: Coll, doc: { _id: string } & Record<string, unknown>) => invoke<T>("store_upsert", { coll, doc }),
+  mirror: (coll: CrmColl, docs: Record<string, unknown>[]) => invoke<number>("store_mirror", { coll, docs }),
   reset: (colls: Coll[]) => invoke<void>("store_reset", { colls }),
 };
 

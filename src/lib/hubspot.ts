@@ -2,8 +2,7 @@
 // Read-only list calls, mapped into Harry's standard crm.* collections.
 
 import { api } from "./api";
-import { inferFields } from "./schema";
-import { SourceSet } from "./sources";
+import { store, CrmColl } from "./store";
 
 type Doc = Record<string, unknown>;
 type HsRecord = { id: string; properties: Record<string, string | null>; associations?: Record<string, { results: { id: string }[] }> };
@@ -31,7 +30,45 @@ async function listAll(slug: string, properties: string[], associations: string[
 const date = (v: string | null | undefined) => (v ? new Date(v) : undefined);
 const first = (r: HsRecord, k: string) => r.associations?.[k]?.results?.[0]?.id;
 
-export async function hubspotSources(): Promise<SourceSet> {
+// Composio is the data source: each sync mirrors HubSpot into Harry's crm_* collections in MongoDB
+// (keyed by HubSpot id, so nothing duplicates) and moves a cursor kept in the `sync` collection.
+// A sync only pulls when HubSpot reports a record modified after that cursor.
+type SyncState = { _id: string; cursor?: number; at?: string; counts?: Record<string, number> };
+
+/** True when any company, contact or deal changed in HubSpot after `since` (ms). */
+async function changedSince(since: number): Promise<boolean> {
+  const probes: [string, string][] = [["companies", "hs_lastmodifieddate"], ["contacts", "lastmodifieddate"], ["deals", "hs_lastmodifieddate"]];
+  const hits = await Promise.all(
+    probes.map(([objectType, propertyName]) =>
+      api
+        .composioExecute("HUBSPOT_SEARCH_CRM_OBJECTS_BY_CRITERIA", { objectType, limit: 1, properties: ["hs_object_id"], filterGroups: [{ filters: [{ propertyName, operator: "GT", value: String(since) }] }] })
+        .then((v) => {
+          const o = v as { data?: { total?: number }; total?: number };
+          return (o?.data?.total ?? o?.total ?? results(v).length) > 0;
+        }),
+    ),
+  );
+  return hits.some(Boolean);
+}
+
+/**
+ * Sync HubSpot into MongoDB. Pulls only when there is something new (or `force`).
+ * Returns true when the stored CRM data changed.
+ */
+export async function syncHubspot(force = false): Promise<boolean> {
+  const state = (await store.list<SyncState>("sync")).find((s) => s._id === "hubspot");
+  if (!force && state?.cursor && !(await changedSince(state.cursor))) return false;
+  const cursor = Date.now();
+  const data = await pullAll();
+  const counts: Record<string, number> = {};
+  for (const [name, docs] of Object.entries(data)) counts[name] = await store.mirror(`crm_${name}` as CrmColl, docs);
+  await store.upsert("sync", { _id: "hubspot", cursor, at: new Date(cursor).toISOString(), counts });
+  return true;
+}
+
+export const lastHubspotSync = async () => (await store.list<SyncState>("sync")).find((s) => s._id === "hubspot") ?? null;
+
+async function pullAll(): Promise<Record<string, Doc[]>> {
   const [companies, contacts, deals, stages] = await Promise.all([
     listAll("HUBSPOT_LIST_COMPANIES", ["name", "domain", "industry", "city", "state", "numberofemployees", "description"]),
     listAll("HUBSPOT_LIST_CONTACTS", ["firstname", "lastname", "email", "jobtitle", "hs_timezone"], ["companies"]),
@@ -71,11 +108,5 @@ export async function hubspotSources(): Promise<SourceSet> {
     };
   });
 
-  const data: Record<string, Doc[]> = { accounts, contacts: people, reps: [...reps.values()], deals: dealDocs, activities: [] };
-  const local = new Map<string, Doc[]>();
-  const schemas = Object.entries(data).map(([name, docs]) => {
-    local.set(`crm.${name}`, docs);
-    return { db: "crm", name, count: docs.length, fields: inferFields(docs.slice(0, 60)), source: "crm" as const };
-  });
-  return { kind: "crm", label: "HubSpot", schemas, local, notes: [] };
+  return { accounts, contacts: people, reps: [...reps.values()], deals: dealDocs, activities: [] };
 }

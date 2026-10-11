@@ -61,6 +61,7 @@ pub fn run() {
             store::store_status,
             store::store_list,
             store::store_upsert,
+            store::store_mirror,
             store::store_reset,
             transcript::parse_transcript,
         ])
