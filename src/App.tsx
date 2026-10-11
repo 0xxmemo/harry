@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
-import { knowledgeCount, loadMemory, Memory } from "./lib/memory";
+import { emptyMemory, knowledgeCount, loadMemory, Memory } from "./lib/memory";
 import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
 import { Brain, ChevronRight, Database, Headphones, Inbox, LucideIcon, MessageSquare, RotateCcw, Settings2, TrendingUp, Workflow } from "lucide-react";
 import { Button, cx, Dot, EmptyState, errText, SectionLabel } from "./components/ui";
@@ -26,7 +26,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [base, setBase] = useState<SourceSet | null>(null);
   const [src, setSrc] = useState<SourceSet | null>(null);
-  const [memory, setMemory] = useState<Memory | null>(null);
+  const [memory, setMemory] = useState<Memory | null>(emptyMemory());
   const [roots, setRoots] = useState<string[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [, bump] = useState(0);
