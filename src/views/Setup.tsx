@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 const INFO: Record<string, { label: string; role: string }> = {
   openllm: { label: "OpenLLM", role: "Runs every model call" },
   atlas: { label: "Atlas CLI", role: "Signs in to MongoDB, creates Harry's database user" },
-  mongosh: { label: "mongosh", role: "Runs read-only queries on your cluster" },
+  mongosh: { label: "mongosh", role: "Queries Harry's own harry database" },
   composio: { label: "Composio", role: "Your one integration for email, CRM and calendar" },
 };
 

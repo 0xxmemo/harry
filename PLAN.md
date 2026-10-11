@@ -12,7 +12,7 @@ Built for the Harness Engineering & Model Wrangling #SFTechWeek Hackathon.
 - **One integration: Composio.** Every outside service (email, CRM, calendar) goes through the user's own Composio account. Harry has no other third-party connectors. Users bring an existing Composio account or create one during setup.
 - **The app holds no credentials.** Local CLIs (`atlas`, `mongosh`, `openllm`, `composio`) store their own tokens; provider OAuth lives in the user's Composio account.
 - **Local files only with consent.** Harry reads only folders the user explicitly grants.
-- **Read-only by default.** Questions run as a temporary read-only database user, and a deterministic gate checks every pipeline before it runs.
+- **Self-contained database.** Harry's database user can read and write only the `harry` database it provisions on the user's Atlas cluster, with no access to anything else. A deterministic gate checks every pipeline before it runs.
 - **Never invent data.** Every number in an answer traces back to a query result or a transcript line.
 - **A human approves anything that leaves Harry.** Harry drafts follow-ups, CRM notes, and playbook changes; a person approves them. Email is sent from the rep's own mail app only after approval (or under an explicit, capped auto-send rule the user turns on per stage). Harry never changes a deal stage on his own.
 - **Self-improvement is earned, not assumed.** A playbook change ships only if it beats the current version on held-out buyers and doesn't hurt later stages.
@@ -38,7 +38,7 @@ Built for the Harness Engineering & Model Wrangling #SFTechWeek Hackathon.
 React UI
   │  invoke / events
 Rust backend (CLIRunner)
-  ├─ atlas    → login, clusters, temp read-only dbuser, connection string
+  ├─ atlas    → login, clusters, dbuser scoped to readWrite@harry, connection string
   ├─ mongosh  → schema sampling, aggregation execution
   ├─ openllm  → follow-ups, call scoring, playbook review, question → pipeline
   └─ composio → link providers, send approved email, fetch replies, read/write CRM, check calendar
