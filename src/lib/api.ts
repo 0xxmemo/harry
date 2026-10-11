@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type ToolStatus = { name: string; path: string | null; version: string | null };
 export type AuthStatus = { openllm: boolean; openllm_detail: string; atlas: boolean; atlas_detail: string };
 export type Completion = { text: string; model: string; ms: number; prompt_tokens: number; completion_tokens: number };
+export type TraceMeta = { eventId: string; event: string; userId: string; convoId?: string; properties?: Record<string, string | number | boolean> };
 export type FileEntry = { path: string; rel: string; ext: string; size: number };
 export type AtlasProject = { id: string; name: string };
 export type AtlasCluster = { name: string; stateName?: string; clusterType?: string };
@@ -33,7 +34,11 @@ export const api = {
     invoke<Record<string, unknown>[]>("mongo_aggregate", { db, collection, pipeline }),
   gateCheck: (pipeline: unknown[]) => invoke<unknown[]>("gate_check", { pipeline }),
 
-  llm: (system: string, prompt: string, model?: string) => invoke<Completion>("llm_complete", { system, prompt, model }),
+  // `trace` is observability context (Raindrop event name, user, round). Rust ignores unknown args.
+  llm: (system: string, prompt: string, model?: string, trace?: TraceMeta) => invoke<Completion>("llm_complete", { system, prompt, model, trace }),
+  /** Raindrop outcome signals. Only the headless loop handles this today; the app ignores it. */
+  traceSignal: (s: { eventId: string; name: string; comment?: string; sentiment?: "POSITIVE" | "NEGATIVE"; replay?: TraceMeta & { input: string; output: string; model: string } }) =>
+    invoke<void>("trace_signal", s).catch(() => {}),
 
   listRoots: () => invoke<string[]>("list_roots"),
   grantFolder: (path: string) => invoke<string[]>("grant_folder", { path }),

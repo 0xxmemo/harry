@@ -42,14 +42,16 @@ export async function runRound(pipeline: Pipeline, stage: Stage, n: number, log:
   const baseline = await activePlaybook(pipeline, stage);
   const { seed, commit } = await commitSeed();
   log({ phase: "Committed test seed", detail: `sha256 ${commit.slice(0, 16)}… (revealed after the round)` });
+  const convoId = `round-${commit.slice(0, 12)}`;
+  const traced = (run: string) => ({ convoId, run });
 
   log({ phase: "Train run", detail: `playbook v${baseline.version} on ${n} train buyers` });
-  const train = await simulate(baseline, stage, TRAIN_SEED, n, (d) => log({ phase: "Train run", detail: `${d}/${n}` }));
+  const train = await simulate(baseline, stage, TRAIN_SEED, n, (d) => log({ phase: "Train run", detail: `${d}/${n}` }), traced("train"));
   log({ phase: "Train result", detail: `${Math.round(train.rate * 100)}% replied` });
 
   log({ phase: "Reviewer", detail: "reading failed conversations and human signal" });
   const extra = await approvedInsights(stage.id);
-  const edit = forcedRules.length ? { add: forcedRules, remove: [], rationale: "Manager-approved rule from a call" } : await review(baseline, pipeline, train.transcripts, extra);
+  const edit = forcedRules.length ? { add: forcedRules, remove: [] as string[], rationale: "Manager-approved rule from a call", sourceEvents: [] as string[] } : await review(baseline, pipeline, train.transcripts, extra, traced("review"));
   try {
     await api.gatePlaybook(pipeline.firm_limits, [...baseline.rules.filter((r) => !edit.remove.includes(r)), ...edit.add]);
   } catch (e) {
@@ -64,9 +66,9 @@ export async function runRound(pipeline: Pipeline, stage: Stage, n: number, log:
 
   log({ phase: "Held-out test", detail: `seed revealed: ${seed}` });
   const [tb, tc, tr] = await Promise.all([
-    simulate(baseline, stage, seed, n),
-    simulate(candidate, stage, seed, n),
-    simulate(applyEdit(baseline, await randomEdit(baseline, seed), "random_edit", "Random-edit control"), stage, seed, n),
+    simulate(baseline, stage, seed, n, undefined, traced("test_current")),
+    simulate(candidate, stage, seed, n, undefined, traced("test_candidate")),
+    simulate(applyEdit(baseline, await randomEdit(baseline, seed), "random_edit", "Random-edit control"), stage, seed, n, undefined, traced("test_random")),
   ]);
   const noise = pairedNoise(tb, tc);
   const gain = tc.rate - tb.rate;
@@ -82,6 +84,9 @@ export async function runRound(pipeline: Pipeline, stage: Stage, n: number, log:
   log({ phase: kept ? "Kept" : "Rolled back", detail: reason });
 
   candidate.scores = { baseline: tb.rate, candidate: tc.rate, noise };
+  // Raindrop draft events the reviewer read when proposing this version.
+  (candidate as PlaybookVersion & { sourceEvents?: string[]; convoId?: string }).sourceEvents = edit.sourceEvents;
+  (candidate as PlaybookVersion & { convoId?: string }).convoId = convoId;
   candidate.status = kept ? "active" : "rejected";
   await store.upsert("playbooks", candidate);
   if (kept) await store.upsert("playbooks", { ...baseline, status: "retired" });

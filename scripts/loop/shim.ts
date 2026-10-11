@@ -9,12 +9,23 @@ import { plugin } from "bun";
 import { spawn } from "child_process";
 import { readFileSync } from "fs";
 import { MongoClient } from "mongodb";
+import { Raindrop } from "raindrop-ai";
+
+// Raindrop: one event per LLM call (begin/finish), outcome signals on Harry's drafts.
+// Debug logs stay on until events are confirmed in the dashboard (RAINDROP_DEBUG=0 to silence).
+export const raindrop = process.env.RAINDROP_WRITE_KEY
+  ? new Raindrop({ writeKey: process.env.RAINDROP_WRITE_KEY, debugLogs: process.env.RAINDROP_DEBUG !== "0" })
+  : null;
+export const raindropEvents = { events: 0, signals: 0 };
 
 const uri = process.env.HARRY_ATLAS_URI;
 if (!uri) throw new Error("Set HARRY_ATLAS_URI (source ~/.harry/atlas.env)");
 const client = new MongoClient(uri, { appName: "harry-loop" });
 export const db = client.db(process.env.HARRY_DB ?? "harry");
-export const close = () => client.close();
+export const close = async () => {
+  await raindrop?.close(); // flush buffered events before exit
+  await client.close();
+};
 
 const COLLECTIONS = ["settings", "outbox", "interactions", "runs", "calls", "insights", "playbooks", "evals", "llm_cache", "optouts", "traces"];
 
@@ -68,7 +79,13 @@ async function invoke(cmd: string, args: Record<string, any> = {}): Promise<any>
     case "llm_complete": {
       const model = args.model ?? "claude-sonnet-5-5";
       const t0 = Date.now();
+      const tm = args.trace;
+      const interaction = raindrop && tm
+        ? raindrop.begin({ eventId: tm.eventId, event: tm.event, userId: tm.userId, convoId: tm.convoId, input: args.prompt, model, properties: { ...tm.properties, system_prompt: args.system.slice(0, 500) } })
+        : null;
       const text = await openllm(args.system, args.prompt, model);
+      interaction?.finish({ output: text });
+      if (interaction) raindropEvents.events++;
       llmCalls++;
       traces.push({ model, ms: Date.now() - t0, system: args.system.slice(0, 60), promptChars: args.prompt.length });
       return { text, model, ms: Date.now() - t0, prompt_tokens: Math.ceil((args.system.length + args.prompt.length) / 4), completion_tokens: Math.ceil(text.length / 4) };
@@ -84,6 +101,17 @@ async function invoke(cmd: string, args: Record<string, any> = {}): Promise<any>
     }
     case "store_reset": {
       for (const c of args.colls) await db.collection(c).deleteMany({});
+      return null;
+    }
+    case "trace_signal": {
+      if (!raindrop) return null;
+      if (args.replay) {
+        const { input, output, model, ...meta } = args.replay;
+        raindrop.trackAi({ ...meta, input, output, model, properties: { ...meta.properties, cached: true } });
+        raindropEvents.events++;
+      }
+      await raindrop.trackSignal({ eventId: args.eventId, name: args.name, comment: args.comment, sentiment: args.sentiment });
+      raindropEvents.signals++;
       return null;
     }
     case "gate_playbook":

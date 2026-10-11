@@ -4,7 +4,7 @@
 //   source ~/.harry/atlas.env
 //   bun --preload ./scripts/loop/shim.ts scripts/loop/run.ts --stage reply --rounds 3 --n 20 [--fresh]
 
-import { close, db, llmCalls, traces } from "./shim";
+import { close, db, llmCalls, raindrop, raindropEvents, traces } from "./shim";
 import { PIPELINES } from "../../src/lib/pipeline";
 import { rounds, runRound } from "../../src/lib/improve";
 
@@ -44,5 +44,6 @@ for (const r of await rounds(pipeline.id)) {
 }
 const byModel = traces.reduce<Record<string, number>>((m, t) => ((m[t.model] = (m[t.model] ?? 0) + 1), m), {});
 await db.collection("traces").insertOne({ kind: "loop_run", pipeline: pipeline.id, stage: stage.id, n, rounds: total, llmCalls, byModel, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() });
+console.log(raindrop ? `Raindrop: ${raindropEvents.events} events, ${raindropEvents.signals} signals sent` : "Raindrop: off (no RAINDROP_WRITE_KEY)");
 console.log(`\n${llmCalls} LLM calls (${Object.entries(byModel).map(([m, c]) => `${m}: ${c}`).join(", ")}) in ${Math.round((Date.now() - t0) / 1000)}s`);
 await close();

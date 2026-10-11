@@ -17,3 +17,14 @@ Flags: `--pipeline saas|real_estate`, `--stage <id>`, `--rounds`, `--n` (buyers 
 Each round: commit a held-out seed hash → train run → reviewer (different model) proposes edits →
 policy gate → candidate vs current vs random-edit control on the revealed seed → kept only if the
 gain beats the paired noise band and unsubscribes don't rise. Every version and round is in Atlas.
+
+## Raindrop
+
+With `RAINDROP_WRITE_KEY` set, every LLM call in a round becomes a Raindrop event:
+`harry_draft`, `buyer_check`, and `playbook_review`. `userId` is the simulated buyer's persona id
+(the playbook id for reviews), `convoId` groups one round, and properties carry
+run (train / test_current / test_candidate / test_random), stage, playbook version, variant, and seed.
+Each draft gets outcome signals: `no_reply`, `reply`, `meeting_request`, `unsubscribe`, `auto_reply`,
+plus `missed_objection` when the buyer had a concern the email ignored. Each `playbook_review` event
+lists the draft event ids it read (`source_events`), and the resulting playbook version stores them too,
+so every rule change links back to the traces that caused it. `RAINDROP_DEBUG=0` silences SDK logs.

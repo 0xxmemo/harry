@@ -7,11 +7,14 @@
 // checks about the message ("does it address security?"), never "were you convinced?". Check
 // answers are cached by input hash so any seed replays exactly.
 
-import { api } from "./api";
+import { api, TraceMeta } from "./api";
 import { extractJson } from "./agent";
 import { seeded } from "./bandit";
 import { Pipeline, PlaybookVersion, Stage } from "./pipeline";
 import { hash, store, uid } from "./store";
+
+/** Which round and run a simulation belongs to, for Raindrop tracing. */
+export type RunTrace = { convoId: string; run: string };
 
 export type Persona = {
   id: string;
@@ -59,12 +62,12 @@ Reply ONE JSON object with booleans: {"specific": ..., "addresses_objection": ..
 - tone_match: matches the requested tone
 - pushy: uses pressure, urgency tricks, or guilt`;
 
-async function check(msg: string, p: Persona, model: string): Promise<Checks> {
+async function check(msg: string, p: Persona, model: string, trace?: RunTrace): Promise<Checks> {
   const input = `CONCERN: ${p.objection === "none" ? "no specific concern" : p.objection}\nRECIPIENT: ${p.role} in ${p.industry}\nREQUESTED TONE: ${p.tone}\nEMAIL:\n${msg}`;
   const key = await hash(model + CHECKER + input);
   const cached = (await store.list<{ _id: string; v: Checks }>("llm_cache")).find((c) => c._id === key);
   if (cached) return cached.v;
-  const res = await api.llm(CHECKER, input, model);
+  const res = await api.llm(CHECKER, input, model, trace && { eventId: uid("ev"), event: "buyer_check", userId: p.id, convoId: trace.convoId, properties: { run: trace.run, objection: p.objection } });
   const v = extractJson<Checks>(res.text);
   await store.upsert("llm_cache", { _id: key, v });
   return v;
@@ -98,20 +101,21 @@ export async function buyerWords(p: Persona, oc: string, model: string) {
 const SIM_SENDER = `You are a sales rep writing ONE cold follow-up email. Reply ONE JSON object: {"subject": "...", "body": "..."}.
 Follow the playbook rules and variant. You only know the recipient's role and industry.`;
 
-async function writeFor(pb: PlaybookVersion, stage: Stage, variant: string, p: Persona, model: string) {
+async function writeFor(pb: PlaybookVersion, stage: Stage, variant: string, p: Persona, model: string, trace?: RunTrace) {
   const v = pb.variants.find((x) => x.id === variant);
   const input = `STAGE: ${stage.goal}\nRULES:\n${pb.rules.map((r) => `- ${r}`).join("\n")}\n${v ? `VARIANT: ${v.label}. ${v.hint}` : ""}\nRECIPIENT: ${p.role} at a ${p.industry} company.`;
   const key = await hash(model + SIM_SENDER + input);
   const cached = (await store.list<{ _id: string; v: string }>("llm_cache")).find((c) => c._id === key);
-  if (cached) return cached.v;
-  const res = await api.llm(SIM_SENDER, input, model);
+  const meta: TraceMeta | undefined = trace && { eventId: uid("ev"), event: "harry_draft", userId: p.id, convoId: trace.convoId, properties: { run: trace.run, stage: stage.id, playbook: pb._id, version: pb.version, variant } };
+  if (cached) return { text: cached.v, meta, input, cached: true };
+  const res = await api.llm(SIM_SENDER, input, model, meta);
   const j = extractJson<{ subject: string; body: string }>(res.text);
   const text = `Subject: ${j.subject}\n\n${j.body}`;
   await store.upsert("llm_cache", { _id: key, v: text });
-  return text;
+  return { text, meta, input, cached: false };
 }
 
-export type SimResult = { rate: number; wins: number; n: number; byVariant: Record<string, { wins: number; trials: number }>; transcripts: { persona: Persona; message: string; outcome: string; checks: Checks; variant: string }[] };
+export type SimResult = { rate: number; wins: number; n: number; byVariant: Record<string, { wins: number; trials: number }>; transcripts: { persona: Persona; message: string; outcome: string; checks: Checks; variant: string; eventId?: string }[] };
 
 export const MODELS = { agent: "claude-sonnet-5-5", buyer: "claude-haiku-5-5", reviewer: "claude-opus-5-5" };
 
@@ -127,7 +131,7 @@ async function pool<T, R>(items: T[], n: number, fn: (t: T, i: number) => Promis
   return out;
 }
 
-export async function simulate(pb: PlaybookVersion, stage: Stage, seed: number, n: number, onTick?: (done: number) => void): Promise<SimResult> {
+export async function simulate(pb: PlaybookVersion, stage: Stage, seed: number, n: number, onTick?: (done: number) => void, trace?: RunTrace): Promise<SimResult> {
   const ps = personas(seed, n);
   const r = seeded(seed * 7919 + 13);
   const rolls = ps.map(() => [r(), r()]);
@@ -135,11 +139,21 @@ export async function simulate(pb: PlaybookVersion, stage: Stage, seed: number, 
   let done = 0;
   const transcripts = await pool(ps, 8, async (p, i) => {
     const variant = variants[i % variants.length];
-    const message = await writeFor(pb, stage, variant, p, MODELS.agent);
-    const checks = await check(message, p, MODELS.buyer);
+    const draft = await writeFor(pb, stage, variant, p, MODELS.agent, trace);
+    const message = draft.text;
+    const checks = await check(message, p, MODELS.buyer, trace);
     const oc = outcome(checks, p, rolls[i][0], rolls[i][1]);
+    if (draft.meta) {
+      // Cached drafts never hit the LLM, so the signal carries the event to record first.
+      const replay = draft.cached ? { ...draft.meta, input: draft.input, output: message, model: MODELS.agent } : undefined;
+      const good = oc === "reply" || oc === "meeting_request";
+      await api.traceSignal({ eventId: draft.meta.eventId, name: oc === "ignore" ? "no_reply" : oc, sentiment: good ? "POSITIVE" : "NEGATIVE", replay });
+      if (p.objection !== "none" && !checks.addresses_objection) {
+        await api.traceSignal({ eventId: draft.meta.eventId, name: "missed_objection", comment: `Buyer raised a ${p.objection} concern that the email did not address.` });
+      }
+    }
     onTick?.(++done);
-    return { persona: p, message, outcome: oc, checks, variant };
+    return { persona: p, message, outcome: oc, checks, variant, eventId: draft.meta?.eventId };
   });
   const byVariant: SimResult["byVariant"] = {};
   for (const t of transcripts) {
@@ -166,7 +180,7 @@ You never see buyer profiles. Propose concrete rule edits for this stage.
 Reply ONE JSON object: {"add": ["new rule", ...], "remove": ["exact existing rule text", ...], "rationale": "2 sentences on the failure pattern you saw"}
 Max 3 additions. Rules must be short, specific, actionable. Never add rules about prices, discounts, or that contradict the firm limits.`;
 
-export async function review(pb: PlaybookVersion, pipeline: Pipeline, failed: SimResult["transcripts"], extra: string[]) {
+export async function review(pb: PlaybookVersion, pipeline: Pipeline, failed: SimResult["transcripts"], extra: string[], trace?: RunTrace) {
   const sample = failed.filter((t) => t.outcome === "ignore" || t.outcome === "unsubscribe").slice(0, 8);
   const replies = failed.filter((t) => t.outcome === "reply").slice(0, 3);
   const input = [
@@ -177,8 +191,13 @@ export async function review(pb: PlaybookVersion, pipeline: Pipeline, failed: Si
     replies.length ? `EMAILS THAT GOT REPLIES:\n${replies.map((t) => t.message).join("\n---\n")}` : "",
     extra.length ? `HUMAN SIGNAL (rep edits, approved call insights):\n${extra.map((x) => `- ${x}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
-  const res = await api.llm(REVIEWER, input, MODELS.reviewer);
-  return extractJson<{ add: string[]; remove: string[]; rationale: string }>(res.text);
+  // The flagged draft events this review read, so a playbook change links back to its Raindrop traces.
+  const sourceEvents = sample.map((t) => t.eventId).filter((x): x is string => !!x);
+  const res = await api.llm(REVIEWER, input, MODELS.reviewer, trace && {
+    eventId: uid("ev"), event: "playbook_review", userId: pb._id, convoId: trace.convoId,
+    properties: { run: trace.run, stage: pb.stage, version: pb.version, source_events: sourceEvents.join(","), flagged: sourceEvents.length },
+  });
+  return { ...extractJson<{ add: string[]; remove: string[]; rationale: string }>(res.text), sourceEvents };
 }
 
 export async function randomEdit(pb: PlaybookVersion, seed: number) {
