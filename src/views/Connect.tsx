@@ -4,7 +4,6 @@ import { hubspotSources } from "../lib/hubspot";
 import { SourceSet } from "../lib/sources";
 import { api, AtlasCluster, AtlasProject } from "../lib/api";
 import { Button, Card, cx, ErrorBox, errText, Pill, Spinner } from "../components/ui";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MongoLeaf } from "./Setup";
 
@@ -19,12 +18,11 @@ function Option({ icon, title, tag, desc, children, highlight }: { icon: ReactNo
   );
 }
 
-export default function Connect({ atlasReady, hubspotLinked, onConnected, onImported }: { atlasReady: boolean; hubspotLinked: boolean; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
+export default function Connect({ atlasReady, storeReady, hubspotLinked, onConnected, onImported }: { atlasReady: boolean; storeReady: boolean; hubspotLinked: boolean; onConnected: (label: string) => Promise<void>; onImported: (s: SourceSet) => void }) {
   const [projects, setProjects] = useState<AtlasProject[] | null>(null);
   const [clusters, setClusters] = useState<AtlasCluster[] | null>(null);
   const [project, setProject] = useState("");
   const [cluster, setCluster] = useState("");
-  const [uri, setUri] = useState("");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
 
@@ -56,7 +54,9 @@ export default function Connect({ atlasReady, hubspotLinked, onConnected, onImpo
 
         <div className="grid grid-cols-2 gap-4">
           <Option highlight icon={<Plug />} title="HubSpot" tag={<Pill tone="brand">via Composio</Pill>} desc="Pull companies, contacts and deals live through your Composio connection. Read-only.">
-            {!hubspotLinked ? (
+            {!storeReady ? (
+              <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Connect an Atlas cluster first; Harry keeps its work there.</div>
+            ) : !hubspotLinked ? (
               <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">Run <code>composio link hubspot</code> in Setup to use this.</div>
             ) : (
               <Button className="w-full" disabled={!!busy} onClick={() => go("hubspot", async () => onImported(await hubspotSources()))}>
@@ -86,13 +86,6 @@ export default function Connect({ atlasReady, hubspotLinked, onConnected, onImpo
           </Option>
         </div>
 
-        <details className="rise group text-sm">
-          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Have a connection string instead?</summary>
-          <form className="mt-3 flex max-w-xl gap-2" onSubmit={(e) => { e.preventDefault(); go("uri", async () => { await api.mongoSetUri(uri); await onConnected(uri.replace(/^mongodb(\+srv)?:\/\/([^@]*@)?/, "").split(/[/?]/)[0]); }); }}>
-            <Input type="password" value={uri} onChange={(e) => setUri(e.target.value)} placeholder="mongodb+srv://…" className="font-mono text-xs" />
-            <Button type="submit" variant="outline" disabled={!uri || !!busy}>{busy === "uri" ? <Spinner /> : "Connect"}</Button>
-          </form>
-        </details>
 
         <ErrorBox>{err}</ErrorBox>
       </div>

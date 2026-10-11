@@ -27,7 +27,7 @@ export const api = {
     invoke<{ username: string; host: string }>("atlas_connect", { projectId, cluster }),
 
   storeStatus: () => invoke<{ persistent: boolean; host: string | null }>("store_status"),
-  mongoSetUri: (uri: string) => invoke<void>("mongo_set_uri", { uri }),
+  atlasRestore: () => invoke<{ username: string; host: string } | null>("atlas_restore"),
   mongoDisconnect: () => invoke<void>("mongo_disconnect"),
   mongoSample: () => invoke<SampledDb[]>("mongo_sample"),
   mongoAggregate: (db: string, collection: string, pipeline: unknown[]) =>

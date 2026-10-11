@@ -121,7 +121,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
   const linked = linkedToolkits(comp?.connections);
   const steps = [allInstalled, !!auth?.openllm, !!auth?.atlas, !!comp?.logged_in && linked.length > 0];
   const doneCount = steps.filter(Boolean).length;
-  const ready = !!auth?.openllm && installed("mongosh");
+  const ready = !!auth?.openllm && !!auth?.atlas && installed("mongosh");
 
   return (
     <div className="h-full overflow-y-auto">
@@ -169,7 +169,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
           )}
         </Step>
 
-        <Step n={3} done={steps[2]} optional title="Sign in to MongoDB Atlas" why="Only needed to ask questions about a live cluster. A Composio-linked CRM works without it.">
+        <Step n={3} done={steps[2]} title="Sign in to MongoDB Atlas" why="Harry keeps everything (outbox, runs, playbooks, memory) in a harry database on your cluster. Nothing is stored on your Mac.">
           {auth?.atlas ? (
             <div className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-2 text-brand-2"><Check className="size-4" /> {auth.atlas_detail}</span>
@@ -234,7 +234,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
         )}
 
         <div className="flex items-center justify-end border-t pt-5">
-          <Button disabled={!ready} onClick={onReady} title={ready ? "" : "Connect OpenLLM first"}>Continue</Button>
+          <Button disabled={!ready} onClick={onReady} title={ready ? "" : "Connect OpenLLM and MongoDB Atlas first"}>Continue</Button>
         </div>
       </div>
     </div>

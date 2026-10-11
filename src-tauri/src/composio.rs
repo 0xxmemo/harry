@@ -170,11 +170,11 @@ pub fn content_hash(item: &Value) -> String {
 /// Human approval: freezes the exact content that may be sent.
 #[tauri::command]
 pub async fn outbox_approve(app: AppHandle, id: String) -> Result<Value, String> {
-    let item = store::get(&app, "outbox", &id).await.ok_or("outbox item not found")?;
+    let item = store::get(&app, "outbox", &id).await?.ok_or("outbox item not found")?;
     if item["status"] != "draft" {
         return Err(format!("item is {}, not a draft", item["status"]));
     }
-    gate::check_message(&item, &store::settings(&app).await)?;
+    gate::check_message(&item, &store::settings(&app).await?)?;
     store::upsert(&app, "outbox", json!({
         "_id": id, "status": "approved", "approvedHash": content_hash(&item),
         "approvedAt": chrono::Utc::now().to_rfc3339(),
@@ -207,7 +207,7 @@ async fn already_sent(app: &AppHandle, item: &Value) -> bool {
 
 #[tauri::command]
 pub async fn outbox_send(app: AppHandle, id: String) -> Result<Value, String> {
-    let item = store::get(&app, "outbox", &id).await.ok_or("outbox item not found")?;
+    let item = store::get(&app, "outbox", &id).await?.ok_or("outbox item not found")?;
     let status = item["status"].as_str().unwrap_or("");
     if status == "sent" {
         return Ok(item);
@@ -218,9 +218,9 @@ pub async fn outbox_send(app: AppHandle, id: String) -> Result<Value, String> {
     if item["approvedHash"].as_str() != Some(content_hash(&item).as_str()) {
         return Err("The message changed after approval; approve it again".into());
     }
-    let settings = store::settings(&app).await;
+    let settings = store::settings(&app).await?;
     gate::check_message(&item, &settings)?;
-    gate::check_caps(&item, &store::read(&app, "outbox").await, &store::read(&app, "optouts").await, &settings)?;
+    gate::check_caps(&item, &store::read(&app, "outbox").await?, &store::read(&app, "optouts").await?, &settings)?;
 
     if status == "sending" && already_sent(&app, &item).await {
         return store::upsert(&app, "outbox", json!({ "_id": id, "status": "sent", "recoveredAfterCrash": true })).await;
@@ -253,8 +253,8 @@ pub async fn outbox_send(app: AppHandle, id: String) -> Result<Value, String> {
 /// Pull replies for sent threads into `interactions`. Returns the new interactions.
 #[tauri::command]
 pub async fn fetch_replies(app: AppHandle) -> Result<Vec<Value>, String> {
-    let sent: Vec<Value> = store::read(&app, "outbox").await.into_iter().filter(|o| o["status"] == "sent").collect();
-    let known: Vec<String> = store::read(&app, "interactions").await.iter().filter_map(|i| i["messageId"].as_str().map(String::from)).collect();
+    let sent: Vec<Value> = store::read(&app, "outbox").await?.into_iter().filter(|o| o["status"] == "sent").collect();
+    let known: Vec<String> = store::read(&app, "interactions").await?.iter().filter_map(|i| i["messageId"].as_str().map(String::from)).collect();
     let mut added = vec![];
     for item in sent {
         let to = item["to"].as_str().unwrap_or_default();

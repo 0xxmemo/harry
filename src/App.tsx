@@ -35,19 +35,24 @@ export default function App() {
   const [composio, setComposio] = useState<{ logged_in: boolean; linked: string[] } | null>(null);
   const [resumable, setResumable] = useState(false);
   const [storeHost, setStoreHost] = useState<string | null>(null);
-  const refreshStore = () => api.storeStatus().then((s) => setStoreHost(s.host)).catch(() => {});
+  // Everything Harry keeps lives in MongoDB, so state loads only once the store is connected.
+  const loadStored = useCallback(async () => {
+    const s = await api.storeStatus().catch(() => null);
+    setStoreHost(s?.host ?? null);
+    if (!s?.persistent) return;
+    loadMemory().then(setMemory);
+    getSettings().then((x) => x.pipeline && setPipelineId(x.pipeline)).catch(() => {});
+    unfinishedRun().then((r) => setResumable(!!r)).catch(() => {});
+    api.listRoots().then(setRoots);
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) {
       setBoot("Harry runs as a desktop app. Start it with `bun run app`.");
       return;
     }
-    loadMemory().then(setMemory);
-    getSettings().then((s) => s.pipeline && setPipelineId(s.pipeline));
-    unfinishedRun().then((r) => setResumable(!!r));
+    api.atlasRestore().then(loadStored).catch(() => loadStored());
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
-    api.listRoots().then(setRoots);
-    refreshStore();
     api.authStatus().then((a) => {
       setAuth(a);
       if (a.openllm) setView("connect");
@@ -192,13 +197,13 @@ export default function App() {
               ["OpenLLM", auth?.openllm, !auth],
               ["MongoDB Atlas", auth?.atlas, !auth],
               ["Composio", composio?.logged_in, !composio],
-              ["Mongo store", !!storeHost, false],
+              ["Mongo store", !!storeHost, !storeHost],
             ].map(([label, ok, warn]) => (
               <div key={String(label)} className="flex items-center gap-2 text-muted-foreground">
                 <Dot ok={!!ok} warn={!!warn} />
                 <span className="flex-1">{label as string}</span>
                 {label === "Composio" && composio?.linked.length ? <span className="truncate text-[11px]">{composio.linked.length} linked</span> : null}
-                {label === "Mongo store" ? <span className="truncate text-[11px]">{storeHost ? "persistent" : "local only"}</span> : null}
+                {label === "Mongo store" ? <span className="truncate text-[11px]">{storeHost ? "connected" : "not connected"}</span> : null}
               </div>
             ))}
           </button>
@@ -218,6 +223,7 @@ export default function App() {
         {view === "connect" && (
           <Connect
             atlasReady={!!auth?.atlas}
+            storeReady={!!storeHost}
             hubspotLinked={!!composio?.linked.some((l) => /hubspot/i.test(l))}
             onImported={(s) => {
               api.mongoDisconnect();
@@ -226,7 +232,7 @@ export default function App() {
             }}
             onConnected={async (label) => {
               try {
-                refreshStore();
+                await loadStored();
                 setBase(await mongoSources(label));
                 setView("ask");
               } catch (e) {

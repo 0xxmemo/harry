@@ -11,7 +11,6 @@ mod transcript;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::Manager;
 
 #[derive(Default)]
 pub struct AppState {
@@ -27,21 +26,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
         .manage(store::Store::default())
-        .setup(|app| {
-            let roots = files::load_roots(app.handle());
-            *app.state::<AppState>().roots.lock().unwrap() = roots;
-            // Reconnect the persistent store from the last session.
-            if let Some(uri) = store::saved_uri(app.handle()) {
-                let handle = app.handle().clone();
-                tauri::async_runtime::block_on(async move {
-                    match store::connect(&handle, &uri).await {
-                        Ok(()) => *handle.state::<AppState>().uri.lock().unwrap() = Some(uri),
-                        Err(e) => eprintln!("harry: could not reconnect MongoDB store: {e}"),
-                    }
-                });
-            }
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             setup::tool_status,
             setup::auth_status,
@@ -52,7 +36,7 @@ pub fn run() {
             atlas::atlas_projects,
             atlas::atlas_clusters,
             atlas::atlas_connect,
-            mongo::mongo_set_uri,
+            atlas::atlas_restore,
             mongo::mongo_disconnect,
             mongo::mongo_sample,
             mongo::mongo_aggregate,
