@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { guessMapping, readCsv, Target, TARGETS, toSources } from "../lib/crmImport";
+import { hubspotSources } from "../lib/hubspot";
 import { SourceSet } from "../lib/sources";
 import { api, AtlasCluster, AtlasProject } from "../lib/api";
 import { Button, Card, ErrorBox, errText, Spinner } from "../components/ui";
@@ -123,6 +124,13 @@ export default function Connect({
           <Card className="rise p-6">
             <div className="text-sm font-medium">Import a CRM export (CSV)</div>
             <p className="mt-1 text-xs text-mute">HubSpot, Salesforce, Pipedrive, or any spreadsheet.</p>
+            <Button
+              className="mt-3 w-full"
+              disabled={!!busy}
+              onClick={() => go("hubspot", async () => onImported(await hubspotSources()))}
+            >
+              {busy === "hubspot" ? <Spinner /> : null} Pull live from HubSpot
+            </Button>
             {!csv ? (
               <Button
                 variant="outline"

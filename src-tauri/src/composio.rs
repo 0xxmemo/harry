@@ -137,7 +137,13 @@ pub async fn execute(app: &AppHandle, slug: &str, data: &Value) -> Result<Value,
     if !o.ok() {
         return Err(format!("{slug}: {}", o.err_text()));
     }
-    let v = parsed.ok_or_else(|| format!("{slug}: unexpected output"))?;
+    let mut v = parsed.ok_or_else(|| format!("{slug}: unexpected output"))?;
+    // Large responses are written to disk and only the path is printed.
+    if v.get("storedInFile") == Some(&Value::Bool(true)) {
+        if let Some(stored) = v["outputFilePath"].as_str().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| parse_json(&s)) {
+            v = stored;
+        }
+    }
     if v.get("successful") == Some(&Value::Bool(false)) || v.get("error").is_some_and(|e| !e.is_null()) {
         return Err(format!("{slug}: {}", v.get("error").map(|e| e.to_string()).unwrap_or_default()));
     }
