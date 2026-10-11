@@ -208,7 +208,7 @@ export async function draftFollowUp(src: SourceSet, pipeline: Pipeline, dealId: 
     createdAt: new Date().toISOString(),
   };
   await store.upsert("outbox", item);
-  await store.upsert("traces", { _id: uid("tr"), kind: "draft", dealId, stage: stage.id, variant: variantId, playbook: pb.version, ms: res.ms, tokens: res.prompt_tokens + res.completion_tokens, model: res.model, at: new Date().toISOString() });
+  await store.upsert("traces", { _id: uid("tr"), kind: "draft", dealId, stage: stage.id, variant: variantId, playbook: pb.version, ms: res.ms, tokens: res.prompt_tokens + res.completion_tokens, cachedTokens: res.cached_tokens, model: res.model, resolvedModel: res.resolved_model, finish: res.finish_reason, at: new Date().toISOString() });
   return item;
 }
 

@@ -1,20 +1,26 @@
-//! Inference through the `openllm` CLI: `openllm -p - -m <model> -s <system> --no-stream`,
-//! with the prompt on stdin.
+//! Inference through the `openllm` CLI: `openllm -m <model> -p - -s <system> --json`, with the
+//! prompt on stdin. `--json` prints one result object with the text, resolved model and usage.
 
 use crate::cli;
 use serde::Serialize;
+use serde_json::Value;
 use std::time::Instant;
 use tauri::AppHandle;
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
+pub const DEFAULT_MODEL: &str = "plus";
 
 #[derive(Serialize)]
 pub struct Completion {
     text: String,
     model: String,
     ms: u128,
+    /// The provider/model the gateway actually routed to, e.g. `grok/grok-4.5` for `plus`.
+    resolved_model: String,
+    finish_reason: String,
+    fallbacks: u64,
     prompt_tokens: u64,
     completion_tokens: u64,
+    cached_tokens: u64,
 }
 
 #[tauri::command]
@@ -25,7 +31,7 @@ pub async fn llm_complete(app: AppHandle, system: String, prompt: String, model:
         &app,
         "llm",
         "openllm",
-        &["-p", "-", "-m", &model, "-s", &system, "--no-stream"],
+        &["-m", &model, "-p", "-", "-s", &system, "--json"],
         &[],
         Some(&prompt),
         false,
@@ -34,13 +40,19 @@ pub async fn llm_complete(app: AppHandle, system: String, prompt: String, model:
     if !out.ok() {
         return Err(format!("openllm: {}", out.err_text().trim_start_matches("[openllm] ")));
     }
-    // The CLI doesn't report usage; estimate ~4 chars per token so traces still show cost.
-    let est = |s: &str| (s.len() as u64).div_ceil(4);
+    let last = out.stdout.lines().rev().find(|l| l.trim_start().starts_with('{')).ok_or("openllm --json returned no result")?;
+    let r: Value = serde_json::from_str(last).map_err(|e| format!("could not parse openllm result: {e}"))?;
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    let u = &r["usage"];
     Ok(Completion {
-        prompt_tokens: est(&system) + est(&prompt),
-        completion_tokens: est(&out.stdout),
-        text: out.stdout.trim().to_string(),
-        model,
+        text: r["text"].as_str().unwrap_or_default().trim().to_string(),
+        model: r["model"].as_str().map(String::from).unwrap_or(model),
+        resolved_model: r["resolved_model"].as_str().unwrap_or_default().to_string(),
+        finish_reason: r["finish_reason"].as_str().unwrap_or_default().to_string(),
+        fallbacks: n(&r["attempted_fallbacks"]),
+        prompt_tokens: n(&u["prompt_tokens"]),
+        completion_tokens: n(&u["completion_tokens"]),
+        cached_tokens: n(&u["prompt_tokens_details"]["cached_tokens"]),
         ms: started.elapsed().as_millis(),
     })
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, AuthStatus, FileEntry, isTauri } from "./lib/api";
 import { emptyMemory, knowledgeCount, loadMemory, Memory } from "./lib/memory";
 import { loadFiles, mergeFiles, mongoSources, SourceSet } from "./lib/sources";
@@ -18,6 +18,7 @@ import { linkedToolkits } from "./views/Setup";
 import BrainView from "./views/Brain";
 
 import type { View } from "./lib/nav";
+import harryFace from "./assets/harry-face.png";
 
 export default function App() {
   const [view, setView] = useState<View>("setup");
@@ -35,6 +36,9 @@ export default function App() {
   // Linking runs in App, not in Connect, so it keeps going (and stays visible) across route changes.
   const [linking, setLinking] = useState<string | null>(null);
   const [linkErr, setLinkErr] = useState("");
+  // Until the saved link is checked, don't flash Setup/Connect at users who are already connected.
+  const [restoring, setRestoring] = useState(true);
+  const linked = useRef(false);
   // Everything Harry keeps lives in MongoDB, so state loads only once the store is connected.
   const loadStored = useCallback(async () => {
     const s = await api.storeStatus().catch(() => null);
@@ -50,11 +54,14 @@ export default function App() {
     let c = null as Awaited<ReturnType<typeof api.atlasRestore>>;
     try { c = await api.atlasRestore(); } catch (e) { setLinkErr(errText(e)); }
     finally { setLinking(null); await loadStored(); }
-    // Already linked: open the cluster's data directly instead of asking to connect again.
+    // Already linked: go straight to work. Setup and Connect stay reachable from the sidebar.
     if (c) {
+      linked.current = true;
+      setView((v) => (v === "setup" || v === "connect" ? "ask" : v));
       const label = c.host.split(".")[0];
-      mongoSources(label).then((s) => { setBase((b) => b ?? s); setView((v) => (v === "connect" ? "ask" : v)); }).catch((e) => setLinkErr(`Connected, but sampling the cluster failed: ${errText(e)}`));
+      await mongoSources(label).then((s) => setBase((b) => b ?? s)).catch((e) => setLinkErr(`Connected, but sampling Harry's database failed: ${errText(e)}`));
     }
+    setRestoring(false);
   }, [loadStored]);
 
   useEffect(() => {
@@ -66,7 +73,7 @@ export default function App() {
     api.composioStatus().then((c) => setComposio({ logged_in: c.logged_in, linked: linkedToolkits(c.connections) })).catch(() => {});
     api.authStatus().then((a) => {
       setAuth(a);
-      if (a.openllm) setView("connect");
+      if (a.openllm && !linked.current) setView((v) => (v === "setup" ? "connect" : v));
     });
   }, []);
 
@@ -123,11 +130,9 @@ export default function App() {
       <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
         <div data-tauri-drag-region className="h-11 shrink-0" />
         <div className="flex items-center gap-2.5 px-5 pb-5">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_24px_-4px] shadow-primary/60">
-            <span className="text-sm font-bold">H</span>
-          </div>
+          <img src={harryFace} alt="" className="size-9 shrink-0 rounded-full bg-[#f4f2ee] p-0.5" />
           <div>
-            <div className="text-[15px] leading-none font-semibold tracking-tight">Harry</div>
+            <div className="font-brand text-lg leading-none">Harry</div>
             <div className="mt-1 text-xs text-muted-foreground">Your best sales rep</div>
           </div>
         </div>
@@ -210,7 +215,8 @@ export default function App() {
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1">
         
-        {view === "setup" && (
+        {restoring && (view === "setup" || view === "connect") && <div className="flex items-center justify-center text-sm text-muted-foreground">{linking ?? "Loading…"}</div>}
+        {!restoring && view === "setup" && (
           <Setup
             onReady={() => {
               refreshAuth();
@@ -219,7 +225,7 @@ export default function App() {
             }}
           />
         )}
-        {view === "connect" && (
+        {!restoring && view === "connect" && (
           <Connect
             atlasReady={!!auth?.atlas}
             storeReady={!!storeHost}
@@ -253,7 +259,7 @@ export default function App() {
         )}
         {src && view === "ask" && <Ask key={src.label} src={src} memory={memory} onMemory={() => bump((n) => n + 1)} />}
         {src && src.kind === "mongo" && (view === "pipeline" || view === "calls") && (
-          <EmptyState icon={<Database />} title="Cluster data is read-only" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
+          <EmptyState icon={<Database />} title="Needs CRM data" action={<Button variant="outline" onClick={() => setView("connect")}>Change data source</Button>}>
             Ask Harry works on live clusters. Pull your CRM from HubSpot to run the follow-up agent.
           </EmptyState>
         )}

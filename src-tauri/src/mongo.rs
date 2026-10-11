@@ -1,4 +1,4 @@
-//! Reads from the user's cluster through `mongosh`. The connection string and pipeline are passed
+//! Reads Harry's own `harry` database through `mongosh`; its user has no access to anything else. The connection string and pipeline are passed
 //! in environment variables so they never show up in process listings.
 
 use crate::{cli, gate, AppState};
@@ -7,8 +7,7 @@ use tauri::{AppHandle, State};
 
 const SAMPLE_JS: &str = r#"
 const c = new Mongo(process.env.HARRY_URI);
-const skip = new Set(["admin", "local", "config"]);
-const dbs = c.getDBNames().filter(n => !skip.has(n)).slice(0, 6);
+const dbs = ["harry"];
 const out = [];
 for (const name of dbs) {
   const db = c.getDB(name);
@@ -63,6 +62,9 @@ pub async fn mongo_aggregate(
     pipeline: Value,
 ) -> Result<Value, String> {
     let checked = gate::check_pipeline(&pipeline).map_err(|e| format!("Policy gate: {e}"))?;
+    if db != "harry" {
+        return Err("Harry can only query its own harry database".into());
+    }
     let uri = uri(&state)?;
     let p = checked.to_string();
     eval(&app, AGG_JS, &[("HARRY_URI", &uri), ("HARRY_DB", &db), ("HARRY_COLL", &collection), ("HARRY_PIPELINE", &p)]).await

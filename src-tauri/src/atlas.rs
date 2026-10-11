@@ -108,27 +108,45 @@ fn new_password() -> String {
     rand::thread_rng().sample_iter(&Alphanumeric).take(28).map(char::from).collect()
 }
 
-/// Makes `cluster` Harry's database: a single `harry` user (read any database, write only `harry`)
+/// Makes `cluster` Harry's database: a single `harry` user that can read and write
+/// only the `harry` database and nothing else on the cluster,
 /// whose description records the cluster, so the next launch can find it through the Atlas CLI.
-/// The working connection string is kept in the OS keychain, so later launches reconnect
+/// The working connection string is saved in a file in Harry's app data folder that only the
+/// current user can read (no keychain, so no password prompts). Later launches reconnect
 /// immediately instead of rotating the password and waiting for Atlas to propagate it.
-const KEYCHAIN_SERVICE: &str = "harry";
-const KEYCHAIN_ACCOUNT: &str = "atlas-store";
+/// Bumped when the user's role changes, so saved credentials from an older role re-link once
+/// (which updates the role) instead of being reused.
+const SCOPE: &str = "harry-only";
 
-fn saved() -> Option<Value> {
-    let e = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok()?;
-    serde_json::from_str(&e.get_password().ok()?).ok()
+fn link_file(app: &AppHandle) -> std::path::PathBuf {
+    app.path().app_data_dir().unwrap_or_else(|_| crate::cli::home().join(".harry")).join("atlas-link.json")
 }
 
-fn save(project_id: &str, cluster: &str, uri: &str, host: &str) {
-    if let Ok(e) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-        let _ = e.set_password(&serde_json::json!({ "project": project_id, "cluster": cluster, "uri": uri, "host": host }).to_string());
+fn saved(app: &AppHandle) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(link_file(app)).ok()?).ok()
+}
+
+fn save(app: &AppHandle, project_id: &str, cluster: &str, uri: &str, host: &str) {
+    let path = link_file(app);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let body = serde_json::json!({ "scope": SCOPE, "project": project_id, "cluster": cluster, "uri": uri, "host": host }).to_string();
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    if let Ok(mut f) = opts.open(&path) {
+        let _ = std::io::Write::write_all(&mut f, body.as_bytes());
     }
 }
 
 /// Reconnect with the saved credentials if they are for `cluster` (or any cluster when None).
 async fn reuse(app: &AppHandle, state: &State<'_, AppState>, cluster: Option<&str>) -> Option<Connected> {
-    let s = saved()?;
+    let s = saved(app)?;
+    if s["scope"].as_str() != Some(SCOPE) {
+        return None;
+    }
     if cluster.is_some_and(|c| s["cluster"].as_str() != Some(c)) {
         return None;
     }
@@ -150,7 +168,7 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     let log = "atlas-connect";
     let password = new_password();
     let desc = format!("{DESC}{cluster}");
-    let role = "readAnyDatabase@admin,readWrite@harry";
+    let role = "readWrite@harry";
     let exists = cli::run(app, log, "atlas", &["dbusers", "describe", USER, "--projectId", project_id, "--output", "json"], &[], None, false).await?.ok();
     let verb = if exists { "update" } else { "create" };
     let mut args = vec!["dbusers", verb];
@@ -186,7 +204,7 @@ async fn link(app: &AppHandle, state: &State<'_, AppState>, project_id: &str, cl
     if !last.is_empty() {
         return Err(last);
     }
-    save(project_id, cluster, &uri, &host);
+    save(app, project_id, cluster, &uri, &host);
     *state.uri.lock().unwrap() = Some(uri);
     crate::files::restore_roots(app).await;
     Ok(Connected { username: USER.into(), host })

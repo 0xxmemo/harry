@@ -158,6 +158,6 @@ export async function analyzeCall(call: Call, src: SourceSet) {
       createdAt: new Date().toISOString(),
     });
   }
-  await store.upsert("traces", { _id: uid("tr"), kind: "call", callId: call._id, ms: res.ms, tokens: res.prompt_tokens + res.completion_tokens, model: res.model, at: new Date().toISOString() });
+  await store.upsert("traces", { _id: uid("tr"), kind: "call", callId: call._id, ms: res.ms, tokens: res.prompt_tokens + res.completion_tokens, cachedTokens: res.cached_tokens, model: res.model, resolvedModel: res.resolved_model, finish: res.finish_reason, at: new Date().toISOString() });
   return { call, insight, draftId };
 }

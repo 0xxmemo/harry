@@ -91,7 +91,7 @@ async function invoke(cmd: string, args: Record<string, any> = {}): Promise<any>
       if (interaction) raindropEvents.events++;
       llmCalls++;
       traces.push({ model, ms: Date.now() - t0, system: args.system.slice(0, 60), promptChars: args.prompt.length });
-      return { text, model, ms: Date.now() - t0, prompt_tokens: Math.ceil((args.system.length + args.prompt.length) / 4), completion_tokens: Math.ceil(text.length / 4) };
+      return { text, model, ms: Date.now() - t0, prompt_tokens: Math.ceil((args.system.length + args.prompt.length) / 4), completion_tokens: Math.ceil(text.length / 4), resolved_model: model, finish_reason: "stop", fallbacks: 0, cached_tokens: 0 };
     }
     case "store_list": {
       if (!COLLECTIONS.includes(args.coll)) throw new Error(`unknown collection ${args.coll}`);
