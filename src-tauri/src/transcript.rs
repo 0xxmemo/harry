@@ -88,17 +88,21 @@ fn plain(text: &str) -> Vec<Turn> {
     // "Name: text", "Name (00:01:02): text", "00:01:02 Name: text", or a Meet-style "Name\n00:01:02\ntext".
     let line_re = Regex::new(r"^(?:\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s+)?([A-Z][\w .'-]{1,40}?)\s*(?:\((\d{1,2}:\d{2}(?::\d{2})?)\))?:\s+(.+)$").unwrap();
     let ts = Regex::new(r"^\d{1,2}:\d{2}(:\d{2})?$").unwrap();
+    // A bare timestamp line (Gemini "00:05:00" section markers) stamps the turns that follow it.
     let mut out: Vec<Turn> = vec![];
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let mut stamp = String::new();
     let mut i = 0;
     while i < lines.len() {
         let l = lines[i];
         if let Some(c) = line_re.captures(l) {
-            let start = c.get(1).or(c.get(3)).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let start = c.get(1).or(c.get(3)).map(|m| m.as_str().to_string()).unwrap_or_else(|| stamp.clone());
             out.push(Turn { speaker: c[2].trim().to_string(), start, text: c[4].trim().to_string() });
-        } else if i + 2 < lines.len() && ts.is_match(lines[i + 1]) && !l.is_empty() && l.len() < 40 {
+        } else if i + 2 < lines.len() && ts.is_match(lines[i + 1]) && !l.is_empty() && l.len() < 40 && !lines[i + 2].is_empty() && !line_re.is_match(lines[i + 2]) {
             out.push(Turn { speaker: l.to_string(), start: lines[i + 1].to_string(), text: lines[i + 2].to_string() });
             i += 2;
+        } else if ts.is_match(l) {
+            stamp = l.to_string();
         } else if !l.is_empty() {
             if let Some(last) = out.last_mut() {
                 last.text.push(' ');
@@ -138,8 +142,8 @@ fn parse_bytes(name: &str, bytes: &[u8]) -> Result<(String, Vec<Turn>), String> 
         }
         _ => return Err(format!(".{ext} isn't a supported transcript format")),
     };
-    if turns.is_empty() {
-        return Err("Couldn't find any speaker turns in this file".into());
+    if turns.len() < 2 {
+        return Err("Couldn't find a conversation between speakers in this file. Is it meeting notes rather than a transcript?".into());
     }
     Ok((ext, turns))
 }
@@ -173,15 +177,19 @@ mod tests {
     use super::*;
     #[test]
     fn parses_samples() {
-        for f in ["granite-bank-discovery.vtt", "helios-health-renewal.docx"] {
+        for f in ["granite-bank-discovery.vtt", "helios-health-renewal.docx", "patchwork-ci-sales-call.txt"] {
             let bytes = std::fs::read(format!("tests/fixtures/{f}")).unwrap();
             let (_, turns) = parse_bytes(f, &bytes).unwrap();
             println!("{f}: {} turns, first {}: {}", turns.len(), turns[0].speaker, &turns[0].text[..30]);
             assert!(turns.len() >= 6);
-            assert!(turns.iter().any(|t| t.speaker.contains("Park") || t.speaker.contains("Novak")));
+            assert!(turns.iter().any(|t| t.speaker.contains("Park") || t.speaker.contains("Novak") || t.speaker.contains("Okafor")));
         }
         let t = plain("Jane Doe: hi there\nBob (00:01): hello\n[00:02] Jane Doe: more\ncontinued");
         assert_eq!(t.len(), 3);
         assert!(t[2].text.ends_with("continued"));
+        // Gemini: a title, then a bare section timestamp that stamps the next turns.
+        let t = plain("Recap - Transcript\n00:00:00\n\nZach Neumann: hi\nJon Archer: hello");
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].speaker.as_str(), t[0].start.as_str()), ("Zach Neumann", "00:00:00"));
     }
 }

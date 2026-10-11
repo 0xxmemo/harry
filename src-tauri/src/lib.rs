@@ -64,6 +64,7 @@ pub fn run() {
             store::store_mirror,
             store::store_reset,
             transcript::parse_transcript,
+            store::call_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Harry");

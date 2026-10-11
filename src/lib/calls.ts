@@ -69,11 +69,19 @@ export function suggestDeals(call: Call, src: SourceSet) {
     .slice(0, 4);
 }
 
-export async function matchDeal(call: Call, deal: Doc, repName?: string, buyerName?: string) {
-  Object.assign(call, { dealId: String(deal._id), dealName: String(deal.name), repName, buyerName });
-  await store.upsert("calls", { _id: call._id, dealId: call.dealId, dealName: call.dealName, repName, buyerName });
+/** Every open deal, for picking one by hand when the transcript doesn't name the account. */
+export const openDeals = (src: SourceSet) =>
+  ((src.local.get("crm.deals") ?? []) as Doc[]).filter((d) => !d.closedAt).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+/** Link the call to a deal, or to none when the call isn't in the CRM (it is still scored, without a follow-up draft). */
+export async function matchDeal(call: Call, deal: Doc | null, repName?: string, buyerName?: string) {
+  Object.assign(call, { dealId: deal ? String(deal._id) : null, dealName: deal ? String(deal.name) : undefined, repName, buyerName });
+  await store.upsert("calls", { _id: call._id, dealId: call.dealId, dealName: call.dealName ?? null, repName, buyerName });
   return call;
 }
+
+/** Remove a call along with its unreviewed playbook proposal and unsent follow-up draft. */
+export const deleteCall = (id: string) => invoke<void>("call_delete", { id });
 
 const ANALYST = `You are a sales coach reviewing a call transcript. Every claim must quote the transcript.
 Reply ONE JSON object:

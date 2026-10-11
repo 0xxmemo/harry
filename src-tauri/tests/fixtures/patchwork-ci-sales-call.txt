@@ -1,0 +1,47 @@
+Maya Okafor (00:00:04): Hi Jonah, hi Mei, thanks for making the time. Before we start, I'm recording this so I can share notes afterward. Is everyone okay with that?
+Jonah Chen (00:00:11): Yep, that's fine.
+Mei Chen (00:00:13): Fine by me.
+Maya Okafor (00:00:16): Great. I have us for thirty minutes. My plan was to hear where month-end stands today, show the piece of Ledgerly that Jonah asked about, and then talk through what an evaluation would look like on your side. Does that work?
+Mei Chen (00:00:28): Works. I have a hard stop at the half hour, so let's keep it tight.
+Maya Okafor (00:00:33): Will do. Jonah, in your email you said close is taking about eleven business days. Walk me through where the time goes.
+Jonah Chen (00:00:41): Most of it is AP and reconciliation. We have around 2,400 vendor invoices a month, a lot of them still come in as PDFs to a shared inbox. Two people on my team key them into NetSuite by hand. Then on day six or seven we start chasing approvals from engineering managers who never look at email.
+Maya Okafor (00:01:02): So the approvals are the bottleneck, not the data entry?
+Jonah Chen (00:01:05): Both, honestly. But the approvals are what blow up the calendar. Last quarter we closed on day fourteen because of one cloud invoice nobody would sign off on.
+Maya Okafor (00:01:16): That's painful. Mei, how does that land on your side?
+Mei Chen (00:01:20): I can't give the board a forecast until close is done. Every day close slips is a day my team is working off stale numbers. My goal for next year is a six-day close. That's what I told our CFO.
+Maya Okafor (00:01:33): Six days. Got it. If you hit six days, what changes for you?
+Mei Chen (00:01:37): We'd actually get to do variance analysis instead of just producing the numbers. And I could stop asking Jonah's team to work weekends.
+Maya Okafor (00:01:46): Okay. Let me show you the approval flow, since that's the biggest lever. Sharing my screen now. When an invoice comes in, Ledgerly reads it, matches it to the PO in NetSuite, and routes it to the approver in Slack, not email. They approve with one click. If they ignore it, it escalates to their manager after the window you set.
+Jonah Chen (00:02:10): Can we set different rules by amount? Anything over fifty thousand has to go to Mei.
+Maya Okafor (00:02:15): Yes, rules can be by amount, department, vendor, or GL code. I'll build your fifty thousand rule into the trial workspace so you can see it with your own data.
+Jonah Chen (00:02:24): And it writes back to NetSuite? We've been burned by tools that make us export CSVs.
+Maya Okafor (00:02:29): It writes back directly through the NetSuite connector, bills and approvals both. No CSVs.
+Mei Chen (00:02:35): Okay, that's the part I care about. Let me ask the uncomfortable question. We looked at a tool like this two years ago and it died in procurement. Our security review took four months and by then the budget was gone. Why would this be different?
+Maya Okafor (00:02:49): That's fair, and I'd rather deal with it now than in month three. Can I ask what held it up last time? Was it the questionnaire, legal redlines, or something else?
+Mei Chen (00:02:58): Mostly the questionnaire. IT security sent a three hundred question spreadsheet and the vendor took weeks to answer each round.
+Maya Okafor (00:03:06): Okay. Here's what I'd suggest. We keep a completed security package ready to go, our standard questionnaire answers plus our data handling documentation. I can send it today, before you even open a ticket with IT. Then I'd like to get thirty minutes with your security lead and our security engineer on the same call, so questions get answered live instead of over email. Most of the delay is the back-and-forth, so we cut that out.
+Mei Chen (00:03:27): That would help. Our IT security lead is Fatima, I can loop her in.
+Maya Okafor (00:03:31): Perfect. And on budget, so I don't waste your time, is there money set aside for this, or does it need to be created?
+Mei Chen (00:03:38): There's a finance tooling line for next year. I wouldn't say it's committed to this yet. I'd need to show the CFO a business case.
+Maya Okafor (00:03:46): Understood. What would the CFO need to see in that business case?
+Mei Chen (00:03:50): Days saved on close, and headcount we don't have to add. We were planning to hire another AP specialist in Q1.
+Maya Okafor (00:03:58): That's helpful. I can put together a draft with your numbers, 2,400 invoices, two people keying, the eleven-day close, and you can tear it apart.
+Mei Chen (00:04:07): Send it over.
+Maya Okafor (00:04:09): Who else weighs in on the decision besides you and the CFO?
+Jonah Chen (00:04:13): Procurement has to sign off on anything over a hundred thousand. That's Theo's team. And IT security, like Mei said.
+Maya Okafor (00:04:20): And who signs the contract at the end?
+Mei Chen (00:04:23): The CFO signs. I own the recommendation.
+Maya Okafor (00:04:27): Got it. Rough timing? When would you want this live?
+Mei Chen (00:04:31): Before Q1 close. So realistically live by mid-January, which means signed in December.
+Maya Okafor (00:04:38): Okay. Working backward, that means security starting in the next two weeks. Jonah, what's the bigger risk for you, the rollout or the switch itself?
+Jonah Chen (00:04:46): Training the approvers. Engineering managers hate new tools.
+Maya Okafor (00:04:50): That's why the approvals live in Slack. They don't log into anything. In a pilot we'd start with one department so you can see adoption before rolling it out everywhere.
+Jonah Chen (00:05:00): I like that. Start with engineering, they're the worst offenders.
+Maya Okafor (00:05:04): Engineering it is. So here's what I have for next steps. Today I send the security package and the draft business case. Mei, you introduce me to Fatima. And I'd like to book the security call plus a working session with Jonah for next Thursday, October twenty-second, at ten your time. Does that work?
+Mei Chen (00:05:22): Thursday at ten works for me. I'll send Fatima the invite.
+Jonah Chen (00:05:26): Works for me too.
+Maya Okafor (00:05:28): Great. I'll send the calendar invite right after this. Anything I missed that you need from me?
+Mei Chen (00:05:33): Just pricing for 258 seats so I can put a number in the business case.
+Maya Okafor (00:05:38): I'll get you a formal quote once I confirm the scope with my team, so it's accurate. Thanks both, talk Thursday.
+Mei Chen (00:05:44): Thanks Maya.
+Jonah Chen (00:05:45): Thanks, bye.

@@ -2,14 +2,16 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, AudioLines, Check, Lightbulb, MessageSquareQuote, Plus, Upload, X } from "lucide-react";
-import { analyzeCall, Call, importCall, matchDeal, suggestDeals } from "../lib/calls";
+import { ArrowRight, AudioLines, Check, Lightbulb, MessageSquareQuote, Plus, Trash2, Upload, X } from "lucide-react";
+import { analyzeCall, Call, deleteCall, importCall, matchDeal, openDeals, suggestDeals } from "../lib/calls";
 import { SourceSet } from "../lib/sources";
 import { store } from "../lib/store";
 import { go } from "../lib/nav";
 import { Button, Card, cx, errText, Pill, SectionLabel, Spinner } from "../components/ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Doc = Record<string, unknown>;
 
@@ -21,6 +23,7 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
   const [consent, setConsent] = useState(false);
   const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState("");
+  const [removing, setRemoving] = useState<Call | null>(null);
 
   const load = async () => {
     const [c, i] = await Promise.all([store.list<Call>("calls"), store.list<Doc>("insights")]);
@@ -64,6 +67,39 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
 
   const call = calls.find((c) => c._id === sel) ?? null;
 
+  const remove = async (c: Call) => {
+    setBusy("delete");
+    try {
+      await deleteCall(c._id);
+      if (sel === c._id) setSel(null);
+      toast.success(`Deleted ${c.file}`);
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setBusy("");
+      setRemoving(null);
+      await load();
+      onChange();
+    }
+  };
+
+  const confirmRemove = (
+    <Dialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete this transcript?</DialogTitle>
+          <DialogDescription>
+            {removing?.file} and its scorecard will be removed, along with its unsent follow-up draft and any playbook rule you haven't approved. This can't be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setRemoving(null)}>Cancel</Button>
+          <Button variant="danger" disabled={busy === "delete"} onClick={() => removing && remove(removing)}>{busy === "delete" ? <Spinner /> : <Trash2 />} Delete transcript</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   const importer = (
     <div className="mx-auto max-w-xl py-16">
       <div className="text-center">
@@ -93,7 +129,7 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
     </div>
   );
 
-  if (calls.length === 0) return <div className="h-full overflow-y-auto px-8">{importer}</div>;
+  if (calls.length === 0) return <div className="h-full overflow-y-auto px-8">{importer}{confirmRemove}</div>;
 
   return (
     <div className="grid h-full grid-cols-[260px_minmax(0,1fr)]">
@@ -104,25 +140,39 @@ export default function Calls({ src, onChange }: { src: SourceSet; onChange: () 
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {calls.map((c) => (
-            <button key={c._id} onClick={() => { setSel(c._id); setAdding(false); }} className={cx("relative block w-full px-4 py-3 text-left transition-colors", sel === c._id ? "bg-accent" : "hover:bg-accent/40")}>
-              {sel === c._id && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
-              <div className="truncate text-sm font-medium">{c.dealName?.split(" — ")[0] ?? c.file}</div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                {c.status === "analyzed" ? <><Check className="size-3 text-primary" /> {c.score?.filter((s) => s.met).length}/{c.score?.length} on checklist</> : <span className="text-amber-300">Pick the deal</span>}
-              </div>
-            </button>
+            <div key={c._id} className={cx("group relative transition-colors", sel === c._id ? "bg-accent" : "hover:bg-accent/40")}>
+              <button onClick={() => { setSel(c._id); setAdding(false); }} className="block w-full py-3 pr-10 pl-4 text-left">
+                {sel === c._id && <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
+                <div className="truncate text-sm font-medium">{c.dealName?.split(" — ")[0] ?? c.file}</div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {c.status === "analyzed" ? <><Check className="size-3 text-primary" /> {c.score?.filter((s) => s.met).length}/{c.score?.length} on checklist</> : <span className="text-amber-300">Pick the deal</span>}
+                </div>
+              </button>
+              <button
+                aria-label={`Delete ${c.file}`}
+                title="Delete transcript"
+                disabled={!!busy}
+                onClick={() => setRemoving(c)}
+                className="absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
           ))}
         </div>
       </div>
       <div className="min-h-0 overflow-y-auto px-8">
-        {adding || !call ? importer : <CallView key={call._id} call={call} src={src} insight={insights.find((i) => i.callId === call._id)} busy={busy} setBusy={setBusy} reload={async () => { await load(); onChange(); }} />}
+        {adding || !call ? importer : <CallView key={call._id} call={call} src={src} insight={insights.find((i) => i.callId === call._id)} busy={busy} setBusy={setBusy} onDelete={() => setRemoving(call)} reload={async () => { await load(); onChange(); }} />}
       </div>
+      {confirmRemove}
     </div>
   );
 }
 
-function CallView({ call, src, insight, busy, setBusy, reload }: { call: Call; src: SourceSet; insight?: Doc; busy: string; setBusy: (s: string) => void; reload: () => Promise<void> }) {
+function CallView({ call, src, insight, busy, setBusy, onDelete, reload }: { call: Call; src: SourceSet; insight?: Doc; busy: string; setBusy: (s: string) => void; onDelete: () => void; reload: () => Promise<void> }) {
   const suggestions = suggestDeals(call, src);
+  const others = openDeals(src).filter((d) => !suggestions.some((s) => s.deal._id === d._id));
+  const [other, setOther] = useState("");
   const speakers = [...new Set(call.turns.map((t) => t.speaker))];
   const reps = ((src.local.get("crm.reps") ?? []) as Doc[]).map((r) => String(r.name));
   const rep = call.repName ?? speakers.find((s) => reps.includes(s)) ?? speakers[0];
@@ -140,15 +190,20 @@ function CallView({ call, src, insight, busy, setBusy, reload }: { call: Call; s
     }
   };
 
-  if (!call.dealId) {
+  const link = (deal: Doc | null) => act("match", async () => { await matchDeal(call, deal, rep, buyer); await analyzeCall(call, src); }, "Call analyzed");
+
+  if (!call.dealId && call.status !== "analyzed") {
     return (
       <div className="mx-auto max-w-xl py-14">
-        <div className="text-xs text-muted-foreground">{call.file} · {call.turns.length} turns</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="truncate text-xs text-muted-foreground">{call.file} · {call.turns.length} turns</div>
+          <Button size="sm" variant="ghost" disabled={!!busy} onClick={onDelete}><Trash2 /> Delete</Button>
+        </div>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Which deal was this call about?</h1>
         <p className="mt-1 text-sm text-muted-foreground">{rep} talking with {buyer}. Harry ranked these from names and companies in the transcript.</p>
         <div className="mt-6 space-y-2">
           {suggestions.map((s, i) => (
-            <button key={String(s.deal._id)} disabled={!!busy} onClick={() => act("match", async () => { await matchDeal(call, s.deal, rep, buyer); await analyzeCall(call, src); }, "Call analyzed")}
+            <button key={String(s.deal._id)} disabled={!!busy} onClick={() => link(s.deal)}
               className={cx("flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:border-primary/60", i === 0 && "border-primary/40")}>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-medium">{String(s.deal.name)} {i === 0 && <Pill tone="brand">best match</Pill>}</div>
@@ -157,7 +212,22 @@ function CallView({ call, src, insight, busy, setBusy, reload }: { call: Call; s
               {busy === "match" ? <Spinner className="text-primary" /> : <ArrowRight className="size-4 text-muted-foreground" />}
             </button>
           ))}
-          {suggestions.length === 0 && <div className="text-sm text-muted-foreground">No matching open deal found.</div>}
+          {suggestions.length === 0 && <div className="text-sm text-muted-foreground">No open deal in the CRM matches the names or companies in this transcript.</div>}
+        </div>
+        <div className="mt-6 space-y-3 rounded-xl border bg-card p-4">
+          {others.length > 0 && (
+            <div className="flex gap-2">
+              <Select value={other} onValueChange={setOther} disabled={!!busy}>
+                <SelectTrigger size="sm" className="min-w-0 flex-1"><SelectValue placeholder="Pick another open deal" /></SelectTrigger>
+                <SelectContent>{others.map((d) => <SelectItem key={String(d._id)} value={String(d._id)}>{String(d.name)}</SelectItem>)}</SelectContent>
+              </Select>
+              <Button size="sm" variant="outline" disabled={!other || !!busy} onClick={() => link(others.find((d) => d._id === other) ?? null)}>Use this deal</Button>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">Not in the CRM? Harry still scores the call and coaches the rep, but won't draft a follow-up.</div>
+            <Button size="sm" variant="ghost" className="shrink-0" disabled={!!busy} onClick={() => link(null)}>Analyze without a deal</Button>
+          </div>
         </div>
         {busy === "match" && <div className="mt-4 text-center text-sm text-muted-foreground">Reading the call, scoring it and drafting a follow-up…</div>}
       </div>
@@ -174,18 +244,25 @@ function CallView({ call, src, insight, busy, setBusy, reload }: { call: Call; s
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-10">
       <div>
-        <div className="text-xs text-muted-foreground">{call.repName} with {call.buyerName} · {call.file}</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{call.dealName}</h1>
+        <div className="flex items-center justify-between gap-3">
+          <div className="truncate text-xs text-muted-foreground">{call.repName} with {call.buyerName} · {call.file}</div>
+          <Button size="sm" variant="ghost" disabled={!!busy} onClick={onDelete}><Trash2 /> Delete</Button>
+        </div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{call.dealName ?? call.file}</h1>
         <p className="mt-2 leading-relaxed text-muted-foreground">{call.summary}</p>
         {call.objections?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{call.objections.map((o) => <Pill key={o} tone="warn">{o}</Pill>)}</div> : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Card className="flex flex-col p-4">
-          <div className="text-sm font-medium">Follow-up email is drafted</div>
-          <div className="mt-1 flex-1 text-xs text-muted-foreground">Written from what was actually said on the call.</div>
-          <Button size="sm" variant="outline" className="mt-3 self-start" onClick={() => go("pipeline")}>Review it <ArrowRight /></Button>
-        </Card>
+        {call.dealId ? (
+          <Card className="flex flex-col p-4">
+            <div className="text-sm font-medium">Follow-up email is drafted</div>
+            <div className="mt-1 flex-1 text-xs text-muted-foreground">Written from what was actually said on the call.</div>
+            <Button size="sm" variant="outline" className="mt-3 self-start" onClick={() => go("pipeline")}>Review it <ArrowRight /></Button>
+          </Card>
+        ) : (
+          <Card className="p-4"><div className="text-sm font-medium">No follow-up drafted</div><div className="mt-1 text-xs text-muted-foreground">This call isn't linked to a CRM deal, so there's no contact to write to.</div></Card>
+        )}
         {insight ? (
           <Card className={cx("flex flex-col p-4", insight.status === "proposed" && "border-amber-400/40 bg-amber-400/5")}>
             <div className="flex items-center gap-1.5 text-sm font-medium"><Lightbulb className="size-4 text-amber-300" /> {call.repName} found a winning answer</div>

@@ -123,6 +123,24 @@ pub async fn store_reset(app: AppHandle, colls: Vec<String>) -> Result<(), Strin
     Ok(())
 }
 
+/// Delete an imported call and what was derived only from it: its unreviewed playbook proposal and
+/// its follow-up draft. Approved rules and drafts that were approved or sent are kept.
+#[tauri::command]
+pub async fn call_delete(app: AppHandle, id: String) -> Result<(), String> {
+    let db = database(&app).await?;
+    db.collection::<Document>("calls").delete_one(doc! { "_id": &id }).await.map_err(|e| e.to_string())?;
+    db.collection::<Document>("insights")
+        .delete_many(doc! { "callId": &id, "status": { "$in": ["proposed", "rejected"] } })
+        .await
+        .map_err(|e| e.to_string())?;
+    let short: String = id.chars().take(12).collect();
+    db.collection::<Document>("outbox")
+        .delete_one(doc! { "_id": format!("ob_call_{short}"), "status": "draft" })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Mirror a provider's record set into a `crm_*` collection: replace each record by `_id` and drop
 /// records the provider no longer has, so the collection always equals the latest sync.
 #[tauri::command]
