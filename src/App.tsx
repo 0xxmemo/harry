@@ -18,6 +18,7 @@ import { linkedToolkits } from "./views/Setup";
 import BrainView from "./views/Brain";
 
 import type { View } from "./lib/nav";
+import harryFace from "./assets/harry-face.png";
 
 export default function App() {
   const [view, setView] = useState<View>("setup");
@@ -129,11 +130,9 @@ export default function App() {
       <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
         <div data-tauri-drag-region className="h-11 shrink-0" />
         <div className="flex items-center gap-2.5 px-5 pb-5">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_24px_-4px] shadow-primary/60">
-            <span className="text-sm font-bold">H</span>
-          </div>
+          <img src={harryFace} alt="" className="size-9 shrink-0 rounded-full bg-[#f4f2ee] p-0.5" />
           <div>
-            <div className="text-[15px] leading-none font-semibold tracking-tight">Harry</div>
+            <div className="font-brand text-lg leading-none">Harry</div>
             <div className="mt-1 text-xs text-muted-foreground">Your best sales rep</div>
           </div>
         </div>
