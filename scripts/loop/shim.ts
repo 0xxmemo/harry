@@ -55,7 +55,8 @@ async function openllm(system: string, prompt: string, model: string): Promise<s
 
 function openllmOnce(system: string, prompt: string, model: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn("openllm", ["-p", "-", "-m", model, "-s", system, "--no-stream"], { stdio: ["pipe", "pipe", "pipe"] });
+    // Local daemon by default (OPENLLM_GATEWAY=cloud to override), so loop load stays off the hosted gateway.
+    const p = spawn("openllm", ["-p", "-", "-m", model, "-s", system, "--no-stream"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, OPENLLM_GATEWAY: process.env.OPENLLM_GATEWAY ?? "local" } });
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (err += d));
