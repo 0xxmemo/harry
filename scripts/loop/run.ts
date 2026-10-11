@@ -5,14 +5,14 @@
 //   bun --preload ./scripts/loop/shim.ts scripts/loop/run.ts --stage reply --rounds 3 --n 20 [--fresh]
 
 import { close, db, llmCalls, raindrop, raindropEvents, traces } from "./shim";
-import { PIPELINES } from "../../src/lib/pipeline";
+import { PIPELINE } from "../../src/lib/pipeline";
 import { rounds, runRound } from "../../src/lib/improve";
 
 const arg = (k: string, d: string) => {
   const i = process.argv.indexOf(`--${k}`);
   return i > 0 ? process.argv[i + 1] : d;
 };
-const pipeline = PIPELINES[arg("pipeline", "saas")];
+const pipeline = PIPELINE;
 const stage = pipeline.stages.find((s) => s.id === arg("stage", "reply"))!;
 const n = Number(arg("n", "20"));
 const total = Number(arg("rounds", "3"));

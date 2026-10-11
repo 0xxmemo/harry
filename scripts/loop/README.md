@@ -10,7 +10,7 @@ and the playbook gate is a TS port of `gate.rs::gate_playbook`.
 bun --preload ./scripts/loop/shim.ts scripts/loop/run.ts --stage reply --rounds 3 --n 20 --fresh
 ```
 
-Flags: `--pipeline saas|real_estate`, `--stage <id>`, `--rounds`, `--n` (buyers per run), `--fresh`
+Flags: `--stage <id>`, `--rounds`, `--n` (buyers per run), `--fresh`
 (clear playbooks/evals for the pipeline). `HARRY_DB` picks the database (default `harry`),
 `HARRY_LLM_PARALLEL` caps concurrent LLM calls (default 8).
 
