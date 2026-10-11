@@ -42,7 +42,7 @@ async function openllm(system: string, prompt: string, model: string): Promise<s
         return await openllmOnce(system, prompt, model);
       } catch (e) {
         // "no online device could serve it" means the subscription device dropped off; it usually comes back within a minute or two.
-        const deviceGone = /could serve it|unreachable/.test(String(e));
+        const deviceGone = /could serve it|unreachable|Bad gateway|50[234]/i.test(String(e));
         if (attempt >= (deviceGone ? 12 : 5)) throw e;
         await new Promise((r) => setTimeout(r, deviceGone ? 15000 : 1500 * 2 ** attempt * (0.5 + Math.random())));
       }
