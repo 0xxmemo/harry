@@ -8,6 +8,36 @@ import { relevantNotes, runPipeline, SourceSet } from "./sources";
 
 type Doc = Record<string, unknown>;
 
+// Planning needs the smarter "plus" alias; summaries and lessons use the fast "lite" alias.
+const PLAN_MODEL = "plus";
+const FAST_MODEL = "lite";
+
+/** Top-level field names used in the pipeline's $match stages. */
+function matchedFields(pipeline: unknown[]): string[] {
+  const out = new Set<string>();
+  for (const st of pipeline as Doc[]) {
+    const m = st?.$match as Doc | undefined;
+    if (!m || typeof m !== "object") continue;
+    for (const k of Object.keys(m)) if (!k.startsWith("$")) out.add(k);
+  }
+  return [...out].slice(0, 5);
+}
+
+/** Real values for the filtered fields, so a repair after 0 rows can match the data exactly. */
+async function fieldValues(src: SourceSet, plan: Plan): Promise<string> {
+  const lines = await Promise.all(
+    matchedFields(plan.pipeline).map(async (f) => {
+      const rows = await runPipeline(src, plan.db, plan.collection, [
+        { $group: { _id: `$${f}`, n: { $sum: 1 } } },
+        { $sort: { n: -1 } },
+        { $limit: 25 },
+      ]).catch(() => [] as Doc[]);
+      return rows.length ? `- ${f}: ${rows.map((r) => JSON.stringify(r._id)).join(", ")}` : "";
+    }),
+  );
+  return lines.filter(Boolean).join("\n");
+}
+
 type Plan = { db: string; collection: string; pipeline: unknown[]; chart?: Answer["chart"] | null; explain?: string };
 
 export type Step = { label: string; detail?: string; status: "run" | "ok" | "fail" | "learn"; ms?: number };
@@ -35,7 +65,7 @@ Reply with ONE JSON object and nothing else:
 Rules:
 - Use only collections and fields from the schema. Read-only stages only ($match $group $project $sort $limit $lookup $unwind $addFields $set $count $facet $bucket $sortByCount $replaceRoot $setWindowFields).
 - Data is messy: stage labels vary in case and wording (e.g. "Closed Won", "closed-won", "Won"); use $regex with "i" or $in. Numbers may be strings; use $convert when needed.
-- Dates are real dates. For "now" use the "$$NOW" variable, e.g. {"$subtract": ["$$NOW", "$lastActivityAt"]} gives milliseconds; one day is 86400000 ms.
+- Dates are real dates. For "now" use the "$$NOW" variable, e.g. {"$subtract": ["$$NOW", "$lastActivityAt"]} gives milliseconds; one day is 86400000 ms. Wrap date fields in $toDate before date math ({"$toDate": "$lastActivityAt"}) in case some are stored as strings.
 - Prefer $lookup to show names instead of ids (reps.name, accounts.name). Keep output columns readable and few (≤ 7). Round money and ratios.
 - End with $limit (≤ 50) unless the result is an aggregate.
 - If no collection in the schema can answer the question, reply {"db": null, "collection": null, "pipeline": [], "explain": "what data is missing"}.
@@ -123,7 +153,7 @@ export async function ask(
     const i = push({ label: attempt === 1 ? "Planning query" : `Repairing query (try ${attempt})`, status: "run" });
     const t0 = performance.now();
     const prompt = attempt === 1 ? context : `${context}\n\nYOUR PREVIOUS PIPELINE FAILED:\n${JSON.stringify(plan)}\nERROR: ${lastError}\nFix it.`;
-    const res = await api.llm(PLANNER, prompt);
+    const res = await api.llm(PLANNER, prompt, PLAN_MODEL);
     tokens += res.prompt_tokens + res.completion_tokens;
     model = res.model;
     try {
@@ -156,7 +186,10 @@ export async function ask(
       rows = await runPipeline(src, plan!.db, plan!.collection, plan!.pipeline);
       done(r, { status: "ok", ms: Math.round(performance.now() - t1), detail: `${rows.length} rows` });
       if (rows.length === 0 && attempt < 3) {
-        lastError = "the pipeline returned 0 rows; filters are probably too strict or label values don't match the data";
+        const values = await fieldValues(src, plan!);
+        lastError =
+          "the pipeline returned 0 rows; filters are probably too strict or label values don't match the data" +
+          (values ? `\nACTUAL VALUES in the filtered fields (most common first):\n${values}` : "");
         done(r, { status: "fail", detail: "0 rows" });
         continue;
       }
@@ -182,7 +215,7 @@ export async function ask(
 
   const s = push({ label: "Writing answer", status: "run" });
   const t2 = performance.now();
-  const sum = await api.llm(SUMMARIZER, `QUESTION: ${question}\nRESULTS (${rows.length} rows, first 40):\n${JSON.stringify(rows.slice(0, 40))}`);
+  const sum = await api.llm(SUMMARIZER, `QUESTION: ${question}\nRESULTS (${rows.length} rows, first 40):\n${JSON.stringify(rows.slice(0, 40))}`, FAST_MODEL);
   tokens += sum.prompt_tokens + sum.completion_tokens;
   let summary = sum.text;
   let actions: string[] = [];
@@ -227,6 +260,7 @@ async function learnLesson(question: string, error: string, fixed: unknown[]): P
   const res = await api.llm(
     "Write ONE short, general lesson (max 25 words) a query writer should remember next time, based on a failure and its fix. Plain text only, no preamble.",
     `QUESTION: ${question}\nFAILURE: ${error}\nWORKING PIPELINE: ${JSON.stringify(fixed)}`,
+    FAST_MODEL,
   );
   return res.text.trim().replace(/^["-\s]+|["\s]+$/g, "").slice(0, 300);
 }

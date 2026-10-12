@@ -26,8 +26,16 @@ const reviveDates = (rows: Doc[]) =>
 
 const CRM = ["accounts", "contacts", "reps", "deals", "activities"] as const;
 // Relaxed Extended JSON from the store encodes dates as { $date: "..." }.
-const reviveExt = (v: unknown): unknown =>
-  v && typeof v === "object" && !Array.isArray(v) && "$date" in (v as object) ? new Date((v as { $date: string }).$date) : v;
+// Synced records can also carry plain ISO strings; date math ($subtract with $$NOW) needs real Dates.
+const reviveExt = (v: unknown): unknown => {
+  if (typeof v === "string") return ISO.test(v) ? new Date(v) : v;
+  if (v && typeof v === "object" && !Array.isArray(v) && "$date" in (v as object)) {
+    const d = (v as { $date: unknown }).$date;
+    const raw = d && typeof d === "object" ? Number((d as { $numberLong?: string }).$numberLong) : d;
+    return new Date(raw as string | number);
+  }
+  return v;
+};
 
 /** Build the workspace from what's stored: synced CRM records plus the knowledge base on the cluster. */
 export async function workspaceSources(label: string): Promise<SourceSet> {
